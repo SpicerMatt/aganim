@@ -171,6 +171,76 @@ export function indexPoint(model, index) {
   return unproject(model.origin[0] + index % model.width + 0.5, model.origin[1] + Math.floor(index / model.width) + 0.5);
 }
 
+function networkWithinBounds(model, bounds, threshold, kind) {
+  const [first, second] = bounds;
+  const south = Math.min(first[0], second[0]);
+  const north = Math.max(first[0], second[0]);
+  const west = Math.min(first[1], second[1]);
+  const east = Math.max(first[1], second[1]);
+  const selected = new Uint8Array(model.flow.length);
+  const incoming = new Uint8Array(model.flow.length);
+  for (let index = 0; index < selected.length; index++) {
+    if (model.accumulation[index] < threshold) continue;
+    const [lat, lng] = indexPoint(model, index);
+    if (lat >= south && lat <= north && lng >= west && lng <= east) selected[index] = 1;
+  }
+  for (let index = 0; index < selected.length; index++) {
+    const next = model.flow[index];
+    if (selected[index] && next >= 0 && selected[next]) incoming[next]++;
+  }
+  const visited = new Uint8Array(model.flow.length);
+  const lines = [];
+  for (let start = 0; start < selected.length; start++) {
+    if (!selected[start] || visited[start] || incoming[start] === 1) continue;
+    const path = [start];
+    visited[start] = 1;
+    let current = start;
+    while (model.flow[current] >= 0) {
+      const next = model.flow[current];
+      if (!selected[next]) break;
+      path.push(next);
+      if (incoming[next] !== 1 || visited[next]) break;
+      visited[next] = 1;
+      current = next;
+    }
+    if (path.length > 1) lines.push(path.map(index => indexPoint(model, index).reverse()));
+  }
+  for (let start = 0; start < selected.length; start++) {
+    if (!selected[start] || visited[start]) continue;
+    const path = [start];
+    visited[start] = 1;
+    let current = start;
+    while (model.flow[current] >= 0 && selected[model.flow[current]] && !visited[model.flow[current]]) {
+      current = model.flow[current];
+      visited[current] = 1;
+      path.push(current);
+    }
+    if (path.length > 1) lines.push(path.map(index => indexPoint(model, index).reverse()));
+  }
+  return { type: 'Feature', properties: { kind, source: SOURCE, min_accumulation_cells: threshold }, geometry: { type: 'MultiLineString', coordinates: lines } };
+}
+
+export async function hydrologyWithinBounds(model, bounds, threshold = 120) {
+  let dividesModel = null;
+  const inverseKey = model.key ? `inverse-flow:${model.key}` : null;
+  if (inverseKey) dividesModel = await readCached(inverseKey);
+  if (!dividesModel) {
+    const inverted = Float32Array.from(model.elevations, elevation => -elevation);
+    const inverse = buildModel(inverted, model.width, model.height, model.origin);
+    dividesModel = { flow: inverse.flow, accumulation: inverse.accumulation, width: inverse.width, height: inverse.height, origin: inverse.origin, resolution: model.resolution };
+    if (inverseKey) {
+      const bytes = dividesModel.flow.byteLength + dividesModel.accumulation.byteLength + 128;
+      await writeCached(inverseKey, dividesModel, 'model', bytes);
+    }
+  }
+  return {
+    streams: networkWithinBounds(model, bounds, threshold, 'streams'),
+    divides: networkWithinBounds(dividesModel, bounds, threshold, 'watershed_divides'),
+    partial: bounds.some(([lat, lng]) => pointIndex(model, lat, lng) < 0),
+    resolution: model.resolution,
+  };
+}
+
 export function snapPoint(model, index, radius = 650) {
   const cellRadius = Math.ceil(radius / model.resolution);
   const column = index % model.width;

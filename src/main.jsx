@@ -2,7 +2,7 @@ import React, { useEffect, useReducer, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import L from 'leaflet';
 import { contours } from 'd3-contour';
-import { Waves, Search, ChevronDown, ChevronRight, ArrowUpRight, MapPin, Layers, Mountain, Crosshair, Plus, Minus, Scan, Route, Download, X, Check, Info, SlidersHorizontal, LoaderCircle, MoveUpRight, Globe2, LocateFixed, CircleHelp, PanelLeftClose, PanelLeftOpen, CheckCircle2, AlertTriangle, HardDrive, Trash2, Languages } from 'lucide-react';
+import { Waves, Search, ArrowUpRight, MapPin, Layers, Mountain, Crosshair, Plus, Minus, Maximize, Scan, Route, Download, X, Check, Info, SlidersHorizontal, LoaderCircle, MoveUpRight, Globe2, LocateFixed, CircleHelp, PanelLeftClose, PanelLeftOpen, CheckCircle2, AlertTriangle, HardDrive, Trash2, Languages } from 'lucide-react';
 import { pointIndex, makeProfile, exportCollection, unproject, SOURCE } from './hydrology.js';
 import { cacheEnabled, setCacheEnabled, cacheStats, clearCache, MAX_CACHE_BYTES } from './cache.js';
 import { terrainTask } from './terrain-client.js';
@@ -13,15 +13,7 @@ import './styles.css';
 
 const DEFAULT_POINT = [33.053, 35.628];
 const WATERSHED_COLOR = '#197659';
-const COUNTRIES = [
-  { name: 'Israel & neighbors', center: [32.2, 35.8], zoom: 7 },
-  { name: 'Israel', center: [31.65, 34.95], zoom: 8 },
-  { name: 'Lebanon', center: [33.92, 35.86], zoom: 9 },
-  { name: 'Syria', center: [34.7, 37.5], zoom: 7 },
-  { name: 'Jordan', center: [31.25, 36.3], zoom: 8 },
-  { name: 'Egypt', center: [29.3, 32.9], zoom: 7 },
-  { name: 'Palestinian territories', center: [31.85, 35.2], zoom: 9 },
-];
+const REGION_BOUNDS = [[28.7, 32.1], [37.5, 42.5]];
 const PLACES = [
   { name: 'Jordan River, northern Israel', point: DEFAULT_POINT },
   { name: 'Mount Hermon', point: [33.4162, 35.8575] },
@@ -59,15 +51,16 @@ function terrainContours(model) {
   }))) } })) };
 }
 
-function TerrainMap({ mapRef, model, selected, results, activeId, pendingSnap, layers, profiles, hoverPoint, mode, onSelect, onDraw, aoi, country, language }) {
+function TerrainMap({ mapRef, model, selected, results, activeId, pendingSnap, layers, profiles, hoverPoint, mode, onSelect, onDraw, aoi, areaHydrology, language }) {
   const t = createTranslator(language);
   const element = useRef(null);
   const handlers = useRef({ onSelect, onDraw, mode });
   const groups = useRef({});
   handlers.current = { onSelect, onDraw, mode };
   useEffect(() => {
-    const map = L.map(element.current, { zoomControl: false, preferCanvas: true, minZoom: 5, maxZoom: 17 }).setView([32.15, 35.7], 7);
+    const map = L.map(element.current, { zoomControl: false, preferCanvas: true, minZoom: 5, maxZoom: 17 });
     mapRef.current = map;
+    map.fitBounds(REGION_BOUNDS, { padding: [28, 28], maxZoom: 7, animate: false });
     L.control.scale({ position: 'bottomleft', imperial: false }).addTo(map);
     map.attributionControl.setPrefix(false);
     map.on('click', event => {
@@ -95,9 +88,6 @@ function TerrainMap({ mapRef, model, selected, results, activeId, pendingSnap, l
     return () => tile.remove();
   }, [layers.hillshade]);
   useEffect(() => {
-    if (country) mapRef.current.setView(country.center, country.zoom, { animate: true });
-  }, [country]);
-  useEffect(() => {
     if (!model || !layers.contours) return;
     const layer = L.geoJSON(terrainContours(model), { style: { color: '#756e5b', weight: 0.8, opacity: 0.45, fill: false, interactive: false } }).addTo(mapRef.current);
     return () => layer.remove();
@@ -115,6 +105,13 @@ function TerrainMap({ mapRef, model, selected, results, activeId, pendingSnap, l
     });
     return () => group.remove();
   }, [results, activeId, layers.drainage, language]);
+  useEffect(() => {
+    if (!areaHydrology) return;
+    const group = L.layerGroup().addTo(mapRef.current);
+    if (layers.drainage) L.geoJSON(areaHydrology.streams, { style: { color: '#247dcc', weight: 1.8, opacity: 0.95, interactive: false } }).addTo(group);
+    L.geoJSON(areaHydrology.divides, { style: { color: '#dc4541', weight: 1.8, opacity: 0.9, dashArray: '5 3', interactive: false } }).addTo(group);
+    return () => group.remove();
+  }, [areaHydrology, layers.drainage]);
   useEffect(() => {
     const group = L.layerGroup().addTo(mapRef.current);
     if (selected) {
@@ -193,13 +190,11 @@ function App() {
   const [hoverPoint, setHoverPoint] = useState(null);
   const [mode, setMode] = useState('point');
   const [aoi, setAoi] = useState(null);
+  const [areaHydrology, setAreaHydrology] = useState(null);
   const [firstCorner, setFirstCorner] = useState(null);
   const [query, setQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
   const [searching, setSearching] = useState(false);
-  const [country, setCountry] = useState(null);
-  const [regionName, setRegionName] = useState('Israel & neighbors');
-  const [countryOpen, setCountryOpen] = useState(false);
   const [modal, setModal] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [localCache, setLocalCache] = useState(cacheEnabled);
@@ -299,10 +294,36 @@ function App() {
     setProfilesOpen(true);
     mapRef.current.setView(selected, 12);
   }
+  async function analyzeArea(bounds) {
+    const request = ++requestId.current;
+    const south = Math.min(bounds[0][0], bounds[1][0]);
+    const north = Math.max(bounds[0][0], bounds[1][0]);
+    const west = Math.min(bounds[0][1], bounds[1][1]);
+    const east = Math.max(bounds[0][1], bounds[1][1]);
+    const normalized = [[south, west], [north, east]];
+    const center = [(south + north) / 2, (west + east) / 2];
+    const reuse = model && normalized.every(point => pointIndex(model, ...point) >= 0) ? model : null;
+    setAoi(normalized); setAreaHydrology(null); setLoading(true); setProgress(0);
+    setAnalysisPhase(reuse ? 'calculating' : 'loading'); setError(''); setLayers(previous => ({ ...previous, drainage: true }));
+    setNotice('Loading streams and watershed divides for area…');
+    try {
+      const { hydrology } = await terrainTask('area-hydrology', { point: center, bounds: normalized, model: reuse, cacheEnabled: localCache }, (value, phase) => {
+        if (request === requestId.current) { setProgress(value); setAnalysisPhase(phase); }
+      });
+      if (request !== requestId.current) return;
+      setAreaHydrology(hydrology); setLoading(false);
+      setNotice(hydrology.partial ? 'Streams and divides are shown where DEM coverage is available; this area extends beyond the data.' : 'Streams and watershed divides are shown for the selected area.');
+      setCacheInfo(await cacheStats());
+    } catch (failure) {
+      if (request !== requestId.current) return;
+      setLoading(false); setAreaHydrology(null);
+      setNotice('Could not load hydrology for this area. Try a smaller area or check the connection.');
+    }
+  }
   function handleDraw(point) {
     if (mode === 'area') {
       if (!firstCorner) { setFirstCorner(point); setNotice('Area of interest: select the opposite corner.'); }
-      else { const bounds = [firstCorner, point]; setAoi(bounds); setFirstCorner(null); setMode('point'); mapRef.current.fitBounds(bounds, { padding: [40, 40] }); setNotice('Area of interest set. Watersheds are not clipped to this boundary.'); }
+      else { const bounds = [firstCorner, point]; setFirstCorner(null); setMode('point'); mapRef.current.fitBounds(bounds, { padding: [40, 40] }); analyzeArea(bounds); }
     } else if (mode === 'profile') {
       if (index < 0) { setNotice('Select a point within the loaded terrain first.'); setMode('point'); return; }
       const north = (point[0] - selected[0]) * 111320;
@@ -352,6 +373,7 @@ function App() {
     setSelected(null); setPointName(''); setModel(null); setLoading(false);
     setPendingSnap(null); setProfiles([]); setProfilesOpen(false); setHoverPoint(null);
     setError(''); setNotice(''); setProgress(0); setMode('point'); setFirstCorner(null);
+    mapRef.current?.fitBounds(REGION_BOUNDS, { padding: [28, 28], maxZoom: 7 });
   }
   function activateAnalysis(analysis) {
     requestId.current++;
@@ -370,7 +392,7 @@ function App() {
   }
   function clearMap() {
     resetSelection(); dispatchAnalysis({ type: 'clear' });
-    setAoi(null); setQuery(''); setSearchOpen(false);
+    setAoi(null); setAreaHydrology(null); setQuery(''); setSearchOpen(false);
   }
   function download() {
     if (!results.length) { setNotice('Calculate a watershed before exporting.'); return; }
@@ -398,15 +420,12 @@ function App() {
       <nav className="header-nav" aria-label={t('Main navigation')}><button className="nav-active" onClick={() => setModal(null)}>{t('Explore')}</button><button onClick={() => { setSidebarOpen(true); analysisListRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }}>{t('Map analyses')}{results.length > 0 && <span className="count-badge">{results.length}</span>}</button><button onClick={() => setModal('sources')}>{t('Data sources')} <ArrowUpRight size={13}/></button></nav>
       <div className="header-right"><span className="live-status"><i/>{t(loading ? 'Loading terrain' : model ? 'Live terrain data' : selected ? 'Terrain unavailable' : 'Ready to analyze')}</span><IconButton icon={CircleHelp} label={t('About this explorer')} onClick={() => setModal('sources')}/><button className="language-button" aria-label={t(language === 'en' ? 'Switch to Hebrew' : 'Switch to English')} title={t(language === 'en' ? 'Switch to Hebrew' : 'Switch to English')} onClick={() => setLanguage(language === 'en' ? 'he' : 'en')}><Languages size={16}/><span lang={language === 'en' ? 'he' : 'en'}>{language === 'en' ? 'עברית' : 'English'}</span></button></div>
     </header>
-    <div className="workspace-bar"><div className="breadcrumbs"><Globe2 size={15}/><span>{t('Workspace')}</span><ChevronRight size={13}/><strong>{t(regionName)}</strong></div><div className="workspace-actions"><span className="desktop-text" dir="ltr">WGS 84 <span className="tiny-dot">·</span> EPSG:4326</span><IconButton icon={sidebarOpen ? PanelLeftClose : PanelLeftOpen} label={t('Toggle analysis panel')} onClick={() => setSidebarOpen(!sidebarOpen)}/><button className="button button-small clear-map-button" title={t('Clear map')} aria-label={t('Clear map')} disabled={!results.length && !selected && !aoi && !loading} onClick={clearMap}><Trash2 size={15}/><span>{t('Clear map')}</span></button><button className="button button-small" onClick={download} disabled={!results.length}><Download size={15}/>{t('Export GeoJSON')}</button></div></div>
+    <div className="workspace-bar"><div className="region-context"><Globe2 size={16}/><span>{t('Israel & neighbors')}</span></div><div className="workspace-actions"><span className="desktop-text" dir="ltr">WGS 84 <span className="tiny-dot">·</span> EPSG:4326</span><IconButton icon={sidebarOpen ? PanelLeftClose : PanelLeftOpen} label={t('Toggle analysis panel')} onClick={() => setSidebarOpen(!sidebarOpen)}/><button className="button button-small clear-map-button" title={t('Clear map')} aria-label={t('Clear map')} disabled={!results.length && !selected && !aoi && !loading} onClick={clearMap}><Trash2 size={15}/><span>{t('Clear map')}</span></button><button className="button button-small" onClick={download} disabled={!results.length}><Download size={15}/>{t('Export GeoJSON')}</button></div></div>
     <main className={`main-layout ${!sidebarOpen ? 'sidebar-hidden' : ''}`}>
       <aside className="sidebar">
         <div className="sidebar-scroll">
           <div className="sidebar-heading"><span className="eyebrow">{t('A CLOSER LOOK AT THE LAND')}</span><h1>{t('Terrain explorer')}</h1><p>{t('Israel and its neighboring landscapes.')}</p></div>
-          <div className="region-picker-wrap"><button className="region-picker" onClick={() => setCountryOpen(!countryOpen)}><span className="region-icon"><Globe2 size={19}/></span><span><small>{t('EXPLORING')}</small><strong>{t(regionName)}</strong></span><ChevronDown size={16}/></button>
-            {countryOpen && <div className="country-menu">{COUNTRIES.map(item => <button key={item.name} onClick={() => { setCountry(item); setRegionName(item.name); setCountryOpen(false); }}>{t(item.name)}{item.name === regionName && <Check size={15}/>}</button>)}</div>}
-          </div>
-          <div className="area-actions"><button className="button button-secondary full" onClick={() => { setMode(mode === 'area' ? 'point' : 'area'); setFirstCorner(null); setNotice('Area of interest: choose two opposite corners.'); }}><Scan size={15}/>{t('Draw area of interest')}</button>{aoi && <IconButton icon={X} label={t('Clear area of interest')} onClick={() => setAoi(null)}/>}</div>
+          <div className="area-actions"><button className="button button-secondary full" onClick={() => { setMode(mode === 'area' ? 'point' : 'area'); setFirstCorner(null); setNotice('Area of interest: choose two opposite corners.'); }}><Scan size={15}/>{t('Draw area of interest')}</button>{aoi && <IconButton icon={X} label={t('Clear area of interest')} onClick={() => { setAoi(null); setAreaHydrology(null); }}/>}</div>
           <section className="analyses-section" ref={analysisListRef}><div className="section-title"><h3><Layers size={16}/>{t('Map analyses')} <span className="analysis-count">{results.length}</span></h3><IconButton icon={Scan} label={t('Fit all analyses')} disabled={!results.length} onClick={zoomAllAnalyses}/></div>{results.length ? <ol className="analysis-list">{results.map(analysis => <li key={analysis.id} data-analysis-id={analysis.id} className={analysis.id === activeId ? 'active' : ''}><button className="analysis-select" aria-pressed={analysis.id === activeId} onClick={() => activateAnalysis(analysis)}><span className="analysis-number">{analysis.number}</span><span><strong>{analysis.name || t('Watershed')}</strong><small>{t(analysis.location || 'Selected terrain point')} · {formatArea(analysis.area)} {t('km²')}</small></span></button><input className="analysis-name-input" aria-label={t('Name watershed {number}', { number: analysis.number })} value={analysis.name} maxLength={60} placeholder={t('Name this watershed')} onFocus={() => dispatchAnalysis({ type: 'activate', id: analysis.id })} onChange={event => dispatchAnalysis({ type: 'rename', id: analysis.id, name: event.target.value })}/><IconButton icon={X} label={t('Remove analysis {number}', { number: analysis.number })} onClick={() => removeAnalysis(analysis.id)}/></li>)}</ol> : <p className="analysis-empty">{t('No analyses on the map yet.')}</p>}</section>
           <section className="point-section">{selected ? <><div className="section-label"><span><MapPin size={14}/>{t('SELECTED POINT')}</span><span className="point-status">{t(loading ? 'Loading' : index >= 0 ? 'DEM verified' : 'Outside coverage')}</span></div>
             <h2>{t(pointName)}</h2><div className="coordinates" dir="ltr"><span>{selected[0].toFixed(5)}° N</span><span>{selected[1].toFixed(5)}° E</span><IconButton icon={Crosshair} label={t('Center on selected point')} onClick={() => mapRef.current.setView(selected, 12)}/></div>
@@ -435,9 +454,9 @@ function App() {
         <div className="sidebar-footer"><span className={`connection-dot ${loading ? 'loading' : ''}`}/><span>{loading ? t('Connecting to elevation data') : model ? t('Terrain grid · {resolution} m', { resolution: format(model.resolution) }) : t(selected ? 'Terrain data unavailable' : 'Ready to analyze')}</span><button title={t('Data sources and limitations')} aria-label={t('Data sources and limitations')} onClick={() => setModal('sources')}><Info size={15}/></button></div>
       </aside>
       <section className="map-workspace">
-        <TerrainMap {...{ mapRef, model, selected, results, activeId, pendingSnap, layers, hoverPoint, mode, aoi, country, language }} profiles={profilesOpen ? profiles : []} onSelect={selectPoint} onDraw={handleDraw}/>
+        <TerrainMap {...{ mapRef, model, selected, results, activeId, pendingSnap, layers, hoverPoint, mode, aoi, areaHydrology, language }} profiles={profilesOpen ? profiles : []} onSelect={selectPoint} onDraw={handleDraw}/>
         <div className="map-topbar"><div className="map-search"><form onSubmit={search}><Search size={18}/><input aria-label={t('Search a place or coordinates')} placeholder={t('Search a place or coordinates')} value={query} onChange={event => { setQuery(event.target.value); setSearchOpen(true); }} onFocus={() => setSearchOpen(true)} onKeyDown={event => { if (event.key === 'Escape') setSearchOpen(false); }}/>{searching ? <LoaderCircle size={17} className="spin"/> : <kbd>↵</kbd>}</form>{searchOpen && <div className="search-results"><div className="search-heading">{t(query ? 'MATCHING PLACES' : 'EXPLORE THE REGION')}<button aria-label={t('Close search')} onClick={() => setSearchOpen(false)}><X size={14}/></button></div>{filteredPlaces.map(place => <button key={place.name} onClick={() => choosePlace(place)}><MapPin size={15}/><span>{t(place.name)}</span><ArrowUpRight size={13}/></button>)}<small>{t('Coordinates: latitude, longitude (WGS 84)')}</small></div>}</div></div>
-        <div className="map-tools"><div className="tool-group zoom-tools"><IconButton icon={Plus} label={t('Zoom in')} onClick={() => mapRef.current.zoomIn()}/><IconButton icon={Minus} label={t('Zoom out')} onClick={() => mapRef.current.zoomOut()}/></div><div className="tool-group"><IconButton icon={LocateFixed} label={t('Go to selected point')} disabled={!selected} onClick={() => mapRef.current.setView(selected, 12)}/></div></div>
+        <div className="map-tools"><div className="tool-group zoom-tools"><IconButton icon={Plus} label={t('Zoom in')} onClick={() => mapRef.current.zoomIn()}/><IconButton icon={Minus} label={t('Zoom out')} onClick={() => mapRef.current.zoomOut()}/></div><div className="tool-group"><IconButton icon={LocateFixed} label={t('Go to selected point')} disabled={!selected} onClick={() => mapRef.current.setView(selected, 12)}/><IconButton icon={Maximize} label={t('Show Israel and neighbors')} onClick={() => mapRef.current.fitBounds(REGION_BOUNDS, { padding: [28, 28], maxZoom: 7 })}/></div></div>
         {mode !== 'point' && <div className="drawing-status"><span className="connection-dot"/>{t(mode === 'area' ? firstCorner ? 'Choose opposite corner' : 'Draw area of interest' : 'Choose profile endpoint')}<button onClick={() => { setMode('point'); setFirstCorner(null); }} aria-label={t('Cancel drawing')}><X size={14}/></button></div>}
         {profilesOpen && profiles.length > 0 && <div className="map-bottom with-profiles"><div className="profiles-panel"><div className="profiles-header"><h3><Mountain size={17}/>{t('Elevation profiles')} <span>{t('{count} transects', { count: profiles.length })}</span></h3><div><span className="profile-source">{format(model?.resolution)} {t('m')} DEM</span><IconButton icon={X} label={t('Close elevation profiles')} onClick={() => { setProfilesOpen(false); setHoverPoint(null); }}/></div></div><div className="profiles-grid">{profiles.map((profile, profileIndex) => <ProfileChart key={profileIndex} profile={profile} index={profileIndex} onHover={setHoverPoint} language={language}/>)}</div></div></div>}
         {notice && <div className="toast" role="status"><Info size={17}/><span>{t(notice)}</span><button aria-label={t('Dismiss message')} onClick={() => setNotice('')}><X size={15}/></button></div>}

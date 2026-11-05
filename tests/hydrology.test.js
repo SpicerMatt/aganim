@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import 'fake-indexeddb/auto';
-import { buildModel, delineate, delineateCached, exportCollection, makeProfile, indexPoint, snapPoint } from '../src/hydrology.js';
+import { buildModel, delineate, delineateCached, exportCollection, makeProfile, indexPoint, snapPoint, hydrologyWithinBounds } from '../src/hydrology.js';
 import { readCached, writeCached, clearCache, cacheStats, setCacheEnabled, MAX_CACHE_BYTES } from '../src/cache.js';
 import { createTranslator } from '../src/i18n.js';
 import { EMPTY_ANALYSES, createWatershedAnalysis, analysesReducer } from '../src/analyses.js';
@@ -113,6 +113,19 @@ test('boundaries are closed GeoJSON rings and exports include drainage', () => {
 
 test('edge-reaching watersheds are marked partial', () => {
   assert.equal(delineate(model, 31 * width + 16).partial, true);
+});
+
+test('area hydrology produces streams and terrain divides, and flags incomplete DEM coverage', async () => {
+  const first = indexPoint(model, 0);
+  const last = indexPoint(model, width * width - 1);
+  const bounds = [first, last];
+  const hydrology = await hydrologyWithinBounds(model, bounds, 1);
+  assert.equal(hydrology.streams.properties.kind, 'streams');
+  assert.equal(hydrology.divides.properties.kind, 'watershed_divides');
+  assert.ok(hydrology.streams.geometry.coordinates.length > 0);
+  assert.ok(hydrology.divides.geometry.coordinates.length > 0);
+  assert.equal(hydrology.partial, false);
+  assert.equal((await hydrologyWithinBounds(model, [[-85, -180], [85, 180]], 1)).partial, true);
 });
 
 test('profiles cross the chosen point and snapping does not change it', () => {

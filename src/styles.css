@@ -17,7 +17,16 @@
 .language-button [lang="he"]{font-family:'Heebo',sans-serif}
 .header-nav{margin-left:0;margin-inline-start:24px}
 .header-right{margin-left:0;margin-inline-start:auto;gap:12px;flex-shrink:0}
-.workspace-bar{gap:12px}
+.workspace-bar{gap:12px;position:relative;z-index:1002}
+.workspace-bar .top-region-picker{position:relative;flex:0 1 255px;min-width:0;margin:0}
+.workspace-bar .top-region-picker .region-picker{width:100%;min-height:37px;padding:3px 8px;gap:8px;background:transparent;border-color:transparent}
+.workspace-bar .top-region-picker .region-picker:hover,.workspace-bar .top-region-picker .region-picker[aria-expanded="true"]{background:#f1f5ed;border-color:#e1e7de}
+.workspace-bar .top-region-picker .region-icon{width:26px;height:26px;flex-shrink:0}
+.workspace-bar .top-region-picker .region-picker>span:nth-child(2){min-width:0}
+.workspace-bar .top-region-picker .region-picker small{font-size:7px;margin-bottom:1px}
+.workspace-bar .top-region-picker .region-picker strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px}
+.workspace-bar .top-region-picker .region-picker>svg{flex-shrink:0;margin-inline-start:auto}
+.workspace-bar .top-region-picker .country-menu{top:calc(100% + 5px);min-width:200px}
 .breadcrumbs{min-width:0}
 .breadcrumbs strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .workspace-actions{gap:12px;flex-shrink:0}
@@ -86,6 +95,12 @@
 @media(max-width:1150px){.header-nav{margin-inline-start:0}}
 @media(max-width:850px){.app-shell[dir="rtl"] .map-tools{left:15px}.app-shell[dir="rtl"] .drawing-status{right:15px}.app-shell[dir="rtl"] .profile-chart+.profile-chart{border-right:0}}
 @media(max-width:600px){
+	.workspace-bar .top-region-picker{flex:1 1 0;max-width:180px}
+	.workspace-bar .top-region-picker .region-picker{min-height:32px;padding:2px 4px;gap:5px}
+	.workspace-bar .top-region-picker .region-icon{width:23px;height:23px}
+	.workspace-bar .top-region-picker .region-picker small{display:none}
+	.workspace-bar .top-region-picker .region-picker strong{font-size:9px}
+	.workspace-bar .top-region-picker .country-menu{min-width:min(200px,calc(100vw - 24px))}
 	.clear-map-button span{display:none}
 	.clear-map-button{min-width:28px;padding:0 7px}
 	.analyses-section .section-title h3{font-size:13px}
