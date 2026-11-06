@@ -36,7 +36,7 @@
 .breadcrumbs{min-width:0}
 .breadcrumbs strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .workspace-actions{gap:12px;flex-shrink:0}
-.area-actions{display:flex;align-items:center;gap:6px;margin-top:-9px;margin-bottom:20px}
+.area-actions{display:flex;align-items:center;gap:6px;margin-top:0;margin-bottom:20px}
 .area-actions .button{min-height:32px;font-size:10px}
 .fit-watershed{margin-top:17px}
 .analyses-section{margin:19px 0 23px;padding-top:17px;border-top:1px solid var(--line)}
