@@ -16,6 +16,14 @@ self.onmessage = async ({ data: { id, type, ...options } }) => {
       self.postMessage({ id, value: { hydrology } });
       return;
     }
+    if (type === 'inspect-point') {
+      const model = options.model || await loadModel(...options.point, progress => self.postMessage({ id, progress, phase: 'loading' }));
+      const index = pointIndex(model, ...options.point);
+      if (index < 0) throw new Error('Selected point is outside terrain coverage');
+      const proposed = snapPoint(model, index);
+      self.postMessage({ id, value: { model: options.model ? null : model, point: options.point, proposed } });
+      return;
+    }
     const model = options.model || await loadModel(...options.point, progress => self.postMessage({ id, progress, phase: progress === 1 ? 'calculating' : 'loading' }));
     let outlet = pointIndex(model, ...options.point);
     const proposed = snapPoint(model, outlet);
