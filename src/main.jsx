@@ -509,7 +509,7 @@ function App() {
 
   return <div className="app-shell" dir={direction} lang={language}>
     <header className="app-header">
-      <a className="brand" dir="ltr" href="/" aria-label={t('AGANIM home')}><span className="brand-symbol"><Waves size={26} strokeWidth={1.7}/></span><span>AGANIM</span></a>
+      <a className="brand" dir="ltr" href={import.meta.env.BASE_URL} aria-label={t('AGANIM home')}><span className="brand-symbol"><Waves size={26} strokeWidth={1.7}/></span><span>AGANIM</span></a>
       <div className="header-divider"/><span className="workspace-label">{t('REGIONAL EXPLORER')}</span>
       <nav className="header-nav" aria-label={t('Main navigation')}><button className="nav-active" onClick={() => setModal(null)}>{t('Explore')}</button><button onClick={() => { setSidebarOpen(true); analysisListRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }}>{t('Map analyses')}{results.length > 0 && <span className="count-badge">{results.length}</span>}</button><button onClick={() => setModal('sources')}>{t('Data sources')} <ArrowUpRight size={13}/></button></nav>
       <div className="header-right"><span className="live-status"><i/>{t(loading ? 'Loading terrain' : model ? 'Live terrain data' : selected ? 'Terrain unavailable' : 'Ready to analyze')}</span><IconButton icon={CircleHelp} label={t('About this explorer')} onClick={() => setModal('sources')}/><button className="language-button" aria-label={t(language === 'en' ? 'Switch to Hebrew' : 'Switch to English')} title={t(language === 'en' ? 'Switch to Hebrew' : 'Switch to English')} onClick={() => setLanguage(language === 'en' ? 'he' : 'en')}><Languages size={16}/><span lang={language === 'en' ? 'he' : 'en'}>{language === 'en' ? 'עברית' : 'English'}</span></button></div>
