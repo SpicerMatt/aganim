@@ -2,7 +2,7 @@ import React, { useEffect, useReducer, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import L from 'leaflet';
 import { contours } from 'd3-contour';
-import { Waves, Search, ArrowUpRight, MapPin, Layers, Mountain, Crosshair, Plus, Minus, Maximize, Scan, Route, Download, X, Check, Info, SlidersHorizontal, LoaderCircle, MoveUpRight, Globe2, LocateFixed, CircleHelp, PanelLeftClose, PanelLeftOpen, ChevronDown, ChevronUp, CheckCircle2, AlertTriangle, HardDrive, Trash2, Languages, FolderOpen } from 'lucide-react';
+import { Search, MapPin, Layers, Mountain, Crosshair, Plus, Minus, Maximize, Scan, Route, Download, X, Check, Info, SlidersHorizontal, LoaderCircle, MoveUpRight, Globe2, LocateFixed, CircleHelp, PanelLeftClose, PanelLeftOpen, ChevronDown, ChevronUp, CheckCircle2, AlertTriangle, HardDrive, Trash2, Languages, FolderOpen, Eye, EyeOff } from 'lucide-react';
 import { pointIndex, makeProfile, exportCollection, unproject, SOURCE } from './hydrology.js';
 import { cacheEnabled, setCacheEnabled, cacheStats, clearCache, MAX_CACHE_BYTES } from './cache.js';
 import { terrainTask } from './terrain-client.js';
@@ -29,12 +29,16 @@ const format = (number, digits = 0) => Number.isFinite(number) ? number.toLocale
 const formatArea = area => area > 0 && area < 0.01 ? '< 0.01' : format(area, 2);
 const profileDirection = bearing => Math.round(bearing) % 180 === 0 ? 'North / south' : Math.round(bearing) % 180 === 90 ? 'East / west' : 'Custom transect';
 
-function IconButton({ icon: Icon, label, active = false, ...props }) {
-  return <button type="button" className={`icon-button ${active ? 'active' : ''}`} title={label} aria-label={label} {...props}><Icon size={18}/></button>;
+function IconButton({ icon: Icon, label, active = false, className = '', ...props }) {
+  return <button type="button" className={`icon-button ${active ? 'active' : ''} ${className}`.trim()} title={label} aria-label={label} {...props}><Icon size={18}/></button>;
 }
 
 function Toggle({ label, checked, onChange, icon: Icon, detail, disabled = false }) {
   return <label className="layer-row"><span className="layer-name"><Icon size={17}/><span>{label}{detail && <small>{detail}</small>}</span></span><input type="checkbox" checked={checked} disabled={disabled} onChange={event => onChange(event.target.checked)}/><span className="switch"/></label>;
+}
+
+function AppMark({ size = 22 }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3 22 21H2L12 3Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round"/><circle cx="12" cy="15" r="1.5" fill="currentColor"/></svg>;
 }
 
 function terrainContours(model) {
@@ -52,7 +56,7 @@ function terrainContours(model) {
   }))) } })) };
 }
 
-function TerrainMap({ mapRef, model, selected, deletePromptId, onDeleteAnalysis, onDismissDelete, hasAnalysis, results, activeId, pendingSnap, layers, profiles, hoverPoint, mode, onSelect, onDraw, onOutletClick, onAnalysisNumberClick, aoi, areaHydrology, language }) {
+function TerrainMap({ mapRef, model, selected, deletePromptId, onDeleteAnalysis, onDismissDelete, hasAnalysis, selectedAnalysisVisible, results, activeId, pendingSnap, layers, profiles, hoverPoint, mode, onSelect, onDraw, onOutletClick, onAnalysisNumberClick, aoi, areaHydrology, language }) {
   const t = createTranslator(language);
   const element = useRef(null);
   const [deletePosition, setDeletePosition] = useState(null);
@@ -105,7 +109,7 @@ function TerrainMap({ mapRef, model, selected, deletePromptId, onDeleteAnalysis,
   }, [model, layers.contours]);
   useEffect(() => {
     const group = L.layerGroup().addTo(mapRef.current);
-    results.forEach((result, index) => {
+    results.filter(result => result.visible !== false).forEach((result, index) => {
       const color = WATERSHED_COLOR;
       L.geoJSON(result.boundary, { style: { color: '#ffffff', weight: 5, fill: false, interactive: false } }).addTo(group);
       const analysisName = result.name || t('Watershed');
@@ -125,12 +129,13 @@ function TerrainMap({ mapRef, model, selected, deletePromptId, onDeleteAnalysis,
   }, [areaHydrology, layers.drainage]);
   useEffect(() => {
     const group = L.layerGroup().addTo(mapRef.current);
-    if (selected) {
+    const showSelected = !hasAnalysis || selectedAnalysisVisible;
+    if (selected && showSelected) {
       const marker = L.marker(selected, { icon: L.divIcon({ className: 'point-marker', html: '<span class="point-ring"><i></i></span>', iconSize: [30, 30], iconAnchor: [15, 15] }), zIndexOffset: 500 }).addTo(group);
       marker.bindTooltip(t('Selected point · {coordinates}', { coordinates: `${selected[0].toFixed(4)}, ${selected[1].toFixed(4)}` }), { direction: 'top', offset: [0, -16] });
       marker.on('click', event => { L.DomEvent.stopPropagation(event); handlers.current.onOutletClick(selected); });
     }
-    if (pendingSnap && selected) {
+    if (pendingSnap && selected && showSelected) {
       L.marker(pendingSnap.point, { icon: L.divIcon({ className: 'proposed-outlet-marker', html: '<span></span>', iconSize: [24, 24], iconAnchor: [12, 12] }), zIndexOffset: 700 }).bindTooltip(t('Proposed channel outlet'), { permanent: true, direction: 'top' }).on('click', event => { L.DomEvent.stopPropagation(event); handlers.current.onOutletClick(pendingSnap.point); }).addTo(group);
       L.polyline([selected, pendingSnap.point], { color: '#bc7f39', dashArray: '4 5', weight: 2 }).addTo(group);
     }
@@ -141,7 +146,7 @@ function TerrainMap({ mapRef, model, selected, deletePromptId, onDeleteAnalysis,
     if (aoi) L.rectangle(aoi, { color: '#6f7794', weight: 2, dashArray: '5 5', fillOpacity: 0.04 }).addTo(group);
     groups.current.markers = group;
     return () => group.remove();
-  }, [selected, pendingSnap, profiles, aoi, language]);
+  }, [selected, selectedAnalysisVisible, hasAnalysis, pendingSnap, profiles, aoi, language]);
   useEffect(() => {
     const map = mapRef.current;
     const analysis = results.find(item => item.id === deletePromptId);
@@ -257,6 +262,11 @@ function App() {
     document.title = t('AGANIM | Israel & Neighbors');
     saveLanguage(language);
   }, [language]);
+
+  useEffect(() => {
+    if (!import.meta.env.PROD || !('serviceWorker' in navigator)) return;
+    navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`, { scope: import.meta.env.BASE_URL }).catch(() => {});
+  }, []);
 
   async function fetchTerrain(point, name = pointName, target = current) {
     const request = ++requestId.current;
@@ -404,8 +414,9 @@ function App() {
     mapRef.current.fitBounds(bounds, { paddingTopLeft: [55, 75], paddingBottomRight: [65, bottomPadding], maxZoom: 14 });
   }
   function zoomAllAnalyses() {
-    if (!results.length) return;
-    mapRef.current.fitBounds(L.featureGroup(results.map(result => L.geoJSON(result.boundary))).getBounds(), { padding: [65, 75], maxZoom: 14 });
+    const visible = results.filter(result => result.visible !== false);
+    if (!visible.length) return;
+    mapRef.current.fitBounds(L.featureGroup(visible.map(result => L.geoJSON(result.boundary))).getBounds(), { padding: [65, 75], maxZoom: 14 });
   }
   function resetSelection() {
     requestId.current++;
@@ -488,9 +499,8 @@ function App() {
 
   return <div className="app-shell" dir={direction} lang={language}>
     <header className="app-header">
-      <a className="brand" dir="ltr" href={import.meta.env.BASE_URL} aria-label={t('AGANIM home')}><span className="brand-symbol"><Waves size={26} strokeWidth={1.7}/></span><span>AGANIM</span></a>
-      <div className="header-divider"/><span className="workspace-label">{t('REGIONAL EXPLORER')}</span>
-      <nav className="header-nav" aria-label={t('Main navigation')}><button className="nav-active" onClick={() => setModal(null)}>{t('Explore')}</button><button onClick={() => { setSidebarOpen(true); setMobilePanelOpen(true); analysisListRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }}>{t('Map analyses')}{results.length > 0 && <span className="count-badge">{results.length}</span>}</button><button onClick={() => setModal('sources')}>{t('Data sources')} <ArrowUpRight size={13}/></button></nav>
+      <a className="brand" dir="ltr" href={import.meta.env.BASE_URL} aria-label={t('AGANIM home')}><span className="brand-symbol"><AppMark size={26}/></span><span>AGANIM</span></a>
+      <nav className="header-nav" aria-label={t('Main navigation')}><button className="nav-active" onClick={() => setModal(null)}>{t('Explore')}</button><button onClick={() => { setSidebarOpen(true); setMobilePanelOpen(true); analysisListRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }}>{t('Map analyses')}{results.length > 0 && <span className="count-badge">{results.length}</span>}</button></nav>
       <div className="header-right"><span className="live-status"><i/>{t(loading ? 'Loading terrain' : model ? 'Live terrain data' : selected ? 'Terrain unavailable' : 'Ready to analyze')}</span><IconButton icon={CircleHelp} label={t('About this explorer')} onClick={() => setModal('sources')}/><button className="language-button" aria-label={t(language === 'en' ? 'Switch to Hebrew' : 'Switch to English')} title={t(language === 'en' ? 'Switch to Hebrew' : 'Switch to English')} onClick={() => setLanguage(language === 'en' ? 'he' : 'en')}><Languages size={16}/><span lang={language === 'en' ? 'he' : 'en'}>{language === 'en' ? 'עברית' : 'English'}</span></button></div>
     </header>
     <div className="workspace-bar"><div className="workspace-actions"><span className="desktop-text" dir="ltr">WGS 84 <span className="tiny-dot">·</span> EPSG:4326</span><IconButton icon={sidebarOpen ? PanelLeftClose : PanelLeftOpen} label={t('Toggle analysis panel')} onClick={() => setSidebarOpen(!sidebarOpen)}/><button className="button button-small clear-map-button" title={t('Clear map')} aria-label={t('Clear map')} disabled={!results.length && !selected && !aoi && !loading} onClick={clearMap}><Trash2 size={15}/><span>{t('Clear map')}</span></button><button className="button button-small" onClick={download} disabled={!results.length}><Download size={15}/>{t('Export GeoJSON')}</button></div></div>
@@ -498,22 +508,22 @@ function App() {
       <aside className={`sidebar ${analysesOnly ? 'sidebar-analyses-only' : ''}`}>
         <div className="mobile-sheet-bar"><button type="button" aria-controls="mobile-analysis-content" aria-expanded={mobilePanelOpen} aria-label={t(mobilePanelOpen ? 'Collapse analysis panel' : 'Expand analysis panel')} onClick={() => setMobilePanelOpen(!mobilePanelOpen)}><span className="mobile-sheet-grip"/><span className="mobile-sheet-title">{t('Map analyses')}</span><span className="analysis-count">{results.length}</span>{mobilePanelOpen ? <ChevronDown size={18}/> : <ChevronUp size={18}/>}</button></div>
         <div className="sidebar-scroll" id="mobile-analysis-content">
+          <section className="analyses-section" ref={analysisListRef}><div className="section-title"><h3><Layers size={16}/>{t('Map analyses')} <span className="analysis-count">{results.length}</span></h3><div className="analysis-heading-actions"><IconButton icon={FolderOpen} label={t('Saved collections')} onClick={openCollections}/><IconButton icon={Scan} label={t('Fit all analyses')} disabled={!results.some(analysis => analysis.visible !== false)} onClick={zoomAllAnalyses}/><IconButton icon={analysesOnly ? ChevronDown : ChevronUp} label={t(analysesOnly ? 'Show full panel' : 'Show basins only')} disabled={!results.length} active={analysesOnly} onClick={() => setAnalysesOnly(!analysesOnly)}/></div></div>{results.length ? <ol className="analysis-list">{results.map(analysis => <li key={analysis.id} data-analysis-id={analysis.id} className={`${analysis.id === activeId ? 'active ' : ''}${analysis.visible === false ? 'analysis-hidden' : ''}`}><button className="analysis-select" aria-pressed={analysis.id === activeId} onClick={() => activateAnalysis(analysis)}><span className="analysis-number">{analysis.number}</span><span><strong>{analysis.name || t('Watershed')}</strong><small>{t(analysis.location || 'Selected terrain point')} · {formatArea(analysis.area)} {t('km²')}</small></span></button><input className="analysis-name-input" aria-label={t('Name watershed {number}', { number: analysis.number })} value={analysis.name} maxLength={60} placeholder={t('Name this watershed')} onFocus={() => dispatchAnalysis({ type: 'activate', id: analysis.id })} onChange={event => dispatchAnalysis({ type: 'rename', id: analysis.id, name: event.target.value })}/><IconButton className="analysis-visibility-button" icon={analysis.visible === false ? Eye : EyeOff} label={t(analysis.visible === false ? 'Show analysis {number}' : 'Hide analysis {number}', { number: analysis.number })} aria-pressed={analysis.visible !== false} onClick={() => dispatchAnalysis({ type: 'visibility', id: analysis.id, visible: analysis.visible === false })}/><IconButton className="analysis-delete-button" icon={X} label={t('Remove analysis {number}', { number: analysis.number })} onClick={() => removeAnalysis(analysis.id)}/></li>)}</ol> : <p className="analysis-empty">{t('No analyses on the map yet.')}</p>}</section>
+          <section className="layers-section"><div className="section-title"><h3><Layers size={16}/>{t('Map layers')}</h3><SlidersHorizontal size={15}/></div><div className="map-style-selector" role="group" aria-label={t('Base map')}><button type="button" className={!layers.satellite ? 'active' : ''} aria-pressed={!layers.satellite} onClick={() => setLayers(previous => ({ ...previous, satellite: false }))}><Mountain size={15}/>{t('Topographic')}</button><button type="button" className={layers.satellite ? 'active' : ''} aria-pressed={layers.satellite} onClick={() => setLayers(previous => ({ ...previous, satellite: true }))}><Globe2 size={15}/>{t('Satellite')}</button></div><Toggle label={t('Drainage network')} icon={Route} checked={layers.drainage} onChange={value => setLayers(previous => ({ ...previous, drainage: value }))}/><Toggle label={t('Contour lines')} icon={Mountain} checked={layers.contours} onChange={value => setLayers(previous => ({ ...previous, contours: value }))}/><Toggle label={t('Hillshade')} icon={Layers} checked={layers.hillshade} onChange={value => setLayers(previous => ({ ...previous, hillshade: value }))}/></section>
           <div className="area-actions"><button className="button button-secondary full" onClick={() => { setMode(mode === 'area' ? 'point' : 'area'); setFirstCorner(null); setNotice('Area of interest: choose two opposite corners.'); }}><Scan size={15}/>{t('Draw area of interest')}</button>{aoi && <IconButton icon={X} label={t('Clear area of interest')} onClick={() => { setAoi(null); setAreaHydrology(null); }}/>}</div>
-          <section className="analyses-section" ref={analysisListRef}><div className="section-title"><h3><Layers size={16}/>{t('Map analyses')} <span className="analysis-count">{results.length}</span></h3><div className="analysis-heading-actions"><IconButton icon={FolderOpen} label={t('Saved collections')} onClick={openCollections}/><IconButton icon={Scan} label={t('Fit all analyses')} disabled={!results.length} onClick={zoomAllAnalyses}/><IconButton icon={analysesOnly ? ChevronDown : ChevronUp} label={t(analysesOnly ? 'Show full panel' : 'Show basins only')} disabled={!results.length} active={analysesOnly} onClick={() => setAnalysesOnly(!analysesOnly)}/></div></div>{results.length ? <ol className="analysis-list">{results.map(analysis => <li key={analysis.id} data-analysis-id={analysis.id} className={analysis.id === activeId ? 'active' : ''}><button className="analysis-select" aria-pressed={analysis.id === activeId} onClick={() => activateAnalysis(analysis)}><span className="analysis-number">{analysis.number}</span><span><strong>{analysis.name || t('Watershed')}</strong><small>{t(analysis.location || 'Selected terrain point')} · {formatArea(analysis.area)} {t('km²')}</small></span></button><input className="analysis-name-input" aria-label={t('Name watershed {number}', { number: analysis.number })} value={analysis.name} maxLength={60} placeholder={t('Name this watershed')} onFocus={() => dispatchAnalysis({ type: 'activate', id: analysis.id })} onChange={event => dispatchAnalysis({ type: 'rename', id: analysis.id, name: event.target.value })}/><IconButton icon={X} label={t('Remove analysis {number}', { number: analysis.number })} onClick={() => removeAnalysis(analysis.id)}/></li>)}</ol> : <p className="analysis-empty">{t('No analyses on the map yet.')}</p>}</section>
           <section className="point-section">{selected ? <><div className="section-label"><span><MapPin size={14}/>{t('SELECTED POINT')}</span><span className="point-status">{t(loading ? 'Loading' : index >= 0 ? 'DEM verified' : 'Outside coverage')}</span></div>
             <h2>{t(pointName)}</h2><div className="coordinates" dir="ltr"><span>{selected[0].toFixed(5)}° N</span><span>{selected[1].toFixed(5)}° E</span><IconButton icon={Crosshair} label={t('Center on selected point')} onClick={() => mapRef.current.setView(selected, 12)}/></div>
             {loading ? <div className="loading-status"><LoaderCircle size={14} className="spin"/><span>{t(analysisPhase === 'calculating' ? 'Calculating watershed in background…' : 'Loading elevation tiles… {progress}%', { progress: format(progress * 100) })}</span></div> : index < 0 ? <button className="button button-primary full" onClick={() => fetchTerrain(selected)}><Download size={16}/>{t('Retry point analysis')}</button> : <p className="point-action-hint">{t(current ? 'Use the map menu to recalculate or choose another outlet.' : 'Choose an outlet on the map to calculate the watershed.')}</p>}
             {error && <div className="error-message" role="alert"><AlertTriangle size={17}/><span>{t(error)}<button onClick={() => fetchTerrain(selected)}>{t('Retry terrain download')}</button></span></div>}
           </> : <div className="clean-map-prompt"><Crosshair size={25} strokeWidth={1.4}/><h2>{t('Select a point on the map')}</h2><p>{t('Add its watershed and surrounding drainage divide to the map.')}</p></div>}
           </section>
-          <section className="layers-section"><div className="section-title"><h3><Layers size={16}/>{t('Map layers')}</h3><SlidersHorizontal size={15}/></div><div className="map-style-selector" role="group" aria-label={t('Base map')}><button type="button" className={!layers.satellite ? 'active' : ''} aria-pressed={!layers.satellite} onClick={() => setLayers(previous => ({ ...previous, satellite: false }))}><Mountain size={15}/>{t('Topographic')}</button><button type="button" className={layers.satellite ? 'active' : ''} aria-pressed={layers.satellite} onClick={() => setLayers(previous => ({ ...previous, satellite: true }))}><Globe2 size={15}/>{t('Satellite')}</button></div><Toggle label={t('Drainage network')} icon={Route} checked={layers.drainage} onChange={value => setLayers(previous => ({ ...previous, drainage: value }))}/><Toggle label={t('Contour lines')} icon={Mountain} checked={layers.contours} onChange={value => setLayers(previous => ({ ...previous, contours: value }))}/><Toggle label={t('Hillshade')} icon={Layers} checked={layers.hillshade} onChange={value => setLayers(previous => ({ ...previous, hillshade: value }))}/></section>
           <div className="map-legend sidebar-legend"><span><i className="legend-area"/>{t('Watershed divide')}</span><span><i className="legend-river"/>{t('Streams')}</span><span><i className="legend-flow"/>{t('Downstream')}</span></div>
           <section className="cache-section"><div className="section-title"><h3><HardDrive size={16}/>{t('Local storage')}</h3><IconButton icon={cacheBusy ? LoaderCircle : Trash2} label={t('Clear local terrain cache')} disabled={loading || cacheBusy || !cacheInfo?.bytes} onClick={removeLocalCache}/></div><Toggle label={t('Cache terrain & watersheds')} icon={HardDrive} checked={localCache} disabled={loading || cacheBusy} onChange={value => { setLocalCache(value); setCacheEnabled(value); }}/><div className="cache-usage"><span>{t('{used} MB', { used: format((cacheInfo?.bytes || 0) / 1048576, 1) })}</span><span>{t('{limit} GB limit', { limit: format(MAX_CACHE_BYTES / 1073741824, 0) })}</span></div><progress aria-label={t('Local cache storage usage')} value={cacheInfo?.bytes || 0} max={MAX_CACHE_BYTES}/><div className="cache-counts">{t('{count} terrain areas', { count: format(cacheInfo?.models || 0) })} <span>·</span> {t('{count} watersheds', { count: format(cacheInfo?.watersheds || 0) })}</div><p>{t(cacheInfo?.available === false ? 'Browser storage unavailable. Analysis still works without caching.' : !localCache ? 'Cache disabled. Existing data stays stored until cleared.' : 'Saved on this device. Basemaps and new areas still need internet.')}</p></section>
         </div>
         <div className="sidebar-footer"><span className={`connection-dot ${loading ? 'loading' : ''}`}/><span>{loading ? t('Connecting to elevation data') : model ? t('Terrain grid · {resolution} m', { resolution: format(model.resolution) }) : t(selected ? 'Terrain data unavailable' : 'Ready to analyze')}</span><button title={t('Data sources and limitations')} aria-label={t('Data sources and limitations')} onClick={() => setModal('sources')}><Info size={15}/></button></div>
       </aside>
       <section className="map-workspace">
-        <TerrainMap {...{ mapRef, model, selected, deletePromptId, hasAnalysis: Boolean(current), results, activeId, pendingSnap, layers, hoverPoint, mode, aoi, areaHydrology, language }} profiles={profilesOpen ? profiles : []} onSelect={selectPoint} onDraw={handleDraw} onOutletClick={point => { const outlet = pointIndex(model, ...point); calculate(outlet, point); }} onAnalysisNumberClick={id => { const analysis = results.find(item => item.id === id); if (!analysis) return; if (analysis.id !== activeId) activateAnalysis(analysis); setDeletePromptId(id); setSidebarOpen(true); setMobilePanelOpen(false); }} onDeleteAnalysis={() => deletePromptId && removeAnalysis(deletePromptId)} onDismissDelete={() => setDeletePromptId(null)}/>
+        <TerrainMap {...{ mapRef, model, selected, deletePromptId, hasAnalysis: Boolean(current), selectedAnalysisVisible: current?.visible !== false, results, activeId, pendingSnap, layers, hoverPoint, mode, aoi, areaHydrology, language }} profiles={profilesOpen ? profiles : []} onSelect={selectPoint} onDraw={handleDraw} onOutletClick={point => { const outlet = pointIndex(model, ...point); calculate(outlet, point); }} onAnalysisNumberClick={id => { const analysis = results.find(item => item.id === id); if (!analysis) return; if (analysis.id !== activeId) activateAnalysis(analysis); setDeletePromptId(id); setSidebarOpen(true); setMobilePanelOpen(false); }} onDeleteAnalysis={() => deletePromptId && removeAnalysis(deletePromptId)} onDismissDelete={() => setDeletePromptId(null)}/>
         <div className="map-topbar"><div className="map-search"><form onSubmit={search}><Search size={18}/><input aria-label={t('Search a place or coordinates')} placeholder={t('Search a place or coordinates')} value={query} onChange={event => { setQuery(event.target.value); setSearchOpen(true); }} onFocus={() => setSearchOpen(true)} onKeyDown={event => { if (event.key === 'Escape') setSearchOpen(false); }}/>{searching ? <LoaderCircle size={17} className="spin"/> : <kbd>↵</kbd>}</form>{searchOpen && <div className="search-results"><div className="search-heading">{t(query ? 'MATCHING PLACES' : 'EXPLORE THE REGION')}<button aria-label={t('Close search')} onClick={() => setSearchOpen(false)}><X size={14}/></button></div>{filteredPlaces.map(place => <button key={place.name} onClick={() => choosePlace(place)}><MapPin size={15}/><span>{t(place.name)}</span><ArrowUpRight size={13}/></button>)}<small>{t('Coordinates: latitude, longitude (WGS 84)')}</small></div>}</div></div>
         <div className="map-tools"><div className="tool-group zoom-tools"><IconButton icon={Plus} label={t('Zoom in')} onClick={() => mapRef.current.zoomIn()}/><IconButton icon={Minus} label={t('Zoom out')} onClick={() => mapRef.current.zoomOut()}/></div><div className="tool-group"><IconButton icon={LocateFixed} label={t('Go to selected point')} disabled={!selected} onClick={() => mapRef.current.setView(selected, 12)}/><IconButton icon={Maximize} label={t('Show Israel and neighbors')} onClick={() => mapRef.current.fitBounds(REGION_BOUNDS, { padding: [28, 28], maxZoom: 7 })}/></div></div>
         {mode !== 'point' && <div className="drawing-status"><span className="connection-dot"/>{t(mode === 'area' ? firstCorner ? 'Choose opposite corner' : 'Draw area of interest' : 'Choose profile endpoint')}<button onClick={() => { setMode('point'); setFirstCorner(null); }} aria-label={t('Cancel drawing')}><X size={14}/></button></div>}
@@ -521,7 +531,7 @@ function App() {
         {notice && <div className="toast" role="status"><Info size={17}/><span>{t(notice)}</span><button aria-label={t('Dismiss message')} onClick={() => setNotice('')}><X size={15}/></button></div>}
       </section>
     </main>
-    <footer className="app-footer"><span><span className="footer-logo"><Waves size={13}/></span>{t('An open view of our shared landscape.')}</span><span>{t('Terrain analysis, not a flood forecast.')}<span className="footer-dot">·</span><button onClick={() => setModal('sources')}>{t('Sources & limitations')}</button></span></footer>
+    <footer className="app-footer"><span><span className="footer-logo"><AppMark size={13}/></span>{t('An open view of our shared landscape.')}</span><span>{t('Terrain analysis, not a flood forecast.')}<span className="footer-dot">·</span><button onClick={() => setModal('sources')}>{t('Sources & limitations')}</button></span></footer>
     {modal && <div className="modal-backdrop" onClick={() => setModal(null)}>
       {modal === 'collections' ? <section className="modal collections-modal" role="dialog" aria-modal="true" aria-label={t('Saved collections')} onClick={event => event.stopPropagation()}>
         <div className="modal-heading"><span className="modal-icon"><FolderOpen size={24}/></span><IconButton icon={X} label={t('Close dialog')} onClick={() => setModal(null)}/></div>

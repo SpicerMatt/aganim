@@ -1,7 +1,7 @@
 export const EMPTY_ANALYSES = { items: [], activeId: null };
 
 export function createWatershedAnalysis(result, { id, number, name = '', location, point, model, elapsedMs, origin }) {
-  return { ...result, id, number, type: 'watershed', name, location, point: [...point], model, elapsedMs, origin };
+  return { ...result, id, number, type: 'watershed', name, location, point: [...point], model, elapsedMs, origin, visible: true };
 }
 
 export function analysesReducer(state, action) {
@@ -18,6 +18,10 @@ export function analysesReducer(state, action) {
     case 'rename': {
       const name = action.name.trimStart().slice(0, 60);
       const items = state.items.map(item => item.id === action.id ? { ...item, name } : item);
+      return state.items.some(item => item.id === action.id) ? { ...state, items } : state;
+    }
+    case 'visibility': {
+      const items = state.items.map(item => item.id === action.id ? { ...item, visible: action.visible } : item);
       return state.items.some(item => item.id === action.id) ? { ...state, items } : state;
     }
     case 'remove': {

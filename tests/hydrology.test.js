@@ -42,6 +42,12 @@ test('analyses start empty and retain independent watersheds from different DEM 
   assert.equal(state.items[0].model, model);
   assert.equal(state.items[1].model, shiftedModel);
   assert.equal(state.items[0].number, 1);
+  state = analysesReducer(state, { type: 'visibility', id: 'first', visible: false });
+  assert.equal(state.items.length, 2);
+  assert.equal(state.activeId, 'second');
+  assert.equal(state.items[0].visible, false);
+  state = analysesReducer(state, { type: 'visibility', id: 'first', visible: true });
+  assert.equal(state.items[0].visible, true);
   const restored = analysesReducer(state, { type: 'restore', items: [{ id: 'restored' }], activeId: null });
   assert.deepEqual(restored.items, [{ id: 'restored' }]);
   assert.equal(restored.activeId, null);

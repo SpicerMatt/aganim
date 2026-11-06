@@ -9,6 +9,8 @@ export const HEBREW = {
   'Name this watershed': 'מתן שם לאגן הזה',
   'Selected terrain point': 'נקודת שטח שנבחרה',
   'Remove analysis {number}': 'הסרת ניתוח {number}',
+  'Hide analysis {number}': 'הסתרת אגן {number}',
+  'Show analysis {number}': 'הצגת אגן {number}',
   'No analyses on the map yet.': 'עדיין אין ניתוחים במפה.',
   'Select a point on the map': 'יש לבחור נקודה במפה',
   'Add its watershed and surrounding drainage divide to the map.': 'אגן הניקוז וקו פרשת המים שסביבו יתווספו למפה.',
