@@ -52,10 +52,9 @@ function terrainContours(model) {
   }))) } })) };
 }
 
-function TerrainMap({ mapRef, model, selected, selectedElevation, loading, actionMenuOpen, deletePromptId, onDeleteAnalysis, onDismissDelete, hasAnalysis, results, activeId, pendingSnap, layers, profiles, hoverPoint, mode, onSelect, onDraw, onOutletClick, onAnalysisNumberClick, aoi, areaHydrology, language }) {
+function TerrainMap({ mapRef, model, selected, deletePromptId, onDeleteAnalysis, onDismissDelete, hasAnalysis, results, activeId, pendingSnap, layers, profiles, hoverPoint, mode, onSelect, onDraw, onOutletClick, onAnalysisNumberClick, aoi, areaHydrology, language }) {
   const t = createTranslator(language);
   const element = useRef(null);
-  const [actionPosition, setActionPosition] = useState(null);
   const [deletePosition, setDeletePosition] = useState(null);
   const handlers = useRef({ onSelect, onDraw, onOutletClick, onAnalysisNumberClick, mode });
   const groups = useRef({});
@@ -136,27 +135,6 @@ function TerrainMap({ mapRef, model, selected, selectedElevation, loading, actio
   }, [selected, pendingSnap, profiles, aoi, language]);
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !actionMenuOpen || !selected || loading || !Number.isFinite(selectedElevation)) { setActionPosition(null); return; }
-    const updatePosition = () => {
-      const point = map.latLngToContainerPoint(selected);
-      const size = map.getSize();
-      const width = Math.min(290, size.x - 24);
-      const height = pendingSnap ? 146 : 116;
-      let left = point.x + 20;
-      if (left + width > size.x - 12) left = point.x - width - 20;
-      left = Math.max(12, Math.min(left, size.x - width - 12));
-      const top = Math.max(58, Math.min(point.y - height / 2, size.y - height - 18));
-      setActionPosition({ left, top });
-    };
-    map.on('move zoom resize', updatePosition);
-    window.addEventListener('resize', updatePosition);
-    const observer = new ResizeObserver(updatePosition);
-    observer.observe(element.current);
-    updatePosition();
-    return () => { map.off('move zoom resize', updatePosition); window.removeEventListener('resize', updatePosition); observer.disconnect(); };
-  }, [selected, selectedElevation, loading, actionMenuOpen, pendingSnap, mapRef]);
-  useEffect(() => {
-    const map = mapRef.current;
     const analysis = results.find(item => item.id === deletePromptId);
     if (!map || !analysis) { setDeletePosition(null); return; }
     const updatePosition = () => {
@@ -184,11 +162,6 @@ function TerrainMap({ mapRef, model, selected, selectedElevation, loading, actio
   }, [hoverPoint]);
   return <>
     <div ref={element} id="terrain-map" dir="ltr" className={`terrain-map ${mode !== 'point' ? 'drawing' : ''}`} aria-label={t('Interactive terrain map of Israel and neighboring countries')}/>
-    {actionPosition && <div className="map-action-menu" dir={language === 'he' ? 'rtl' : 'ltr'} style={actionPosition}>
-      <div className="map-action-heading"><MapPin size={15}/><strong>{t(pendingSnap ? 'Nearby drainage channel' : 'Outlet ready')}</strong></div>
-      <div className="map-action-elevation">{t('Selected point')} · <bdi>{format(selectedElevation)} {t('m')}</bdi></div>
-      <p className="map-action-hint">{t(pendingSnap ? 'Click the original marker or the marked channel outlet to calculate there. Click elsewhere to suggest a new outlet.' : 'Click the marked point to calculate here. Click elsewhere to suggest a new outlet.')}</p>
-    </div>}
     {deletePosition && <div className="map-delete-menu" dir={language === 'he' ? 'rtl' : 'ltr'} style={deletePosition}>
       <button className="delete-confirm-button" onClick={onDeleteAnalysis}>{t('Remove')}</button>
     </div>}
@@ -237,7 +210,6 @@ function App() {
   const results = analysisState.items;
   const activeId = analysisState.activeId;
   const [loading, setLoading] = useState(false);
-  const [actionMenuOpen, setActionMenuOpen] = useState(false);
   const [deletePromptId, setDeletePromptId] = useState(null);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState('');
@@ -280,7 +252,6 @@ function App() {
     const request = ++requestId.current;
     const reuse = model && pointIndex(model, ...point) >= 0 ? model : null;
     setLoading(true); setProgress(0); setError(''); setPendingSnap(null);
-    setActionMenuOpen(false);
     setAnalysisPhase('loading');
     if (!reuse) { setModel(null); setProfiles([]); }
     try {
@@ -294,14 +265,13 @@ function App() {
       setSelected(point);
       setPointName(name);
       setPendingSnap(response.proposed?.distance > data.resolution * 0.8 ? response.proposed : null);
-      setActionMenuOpen(true);
       if (profilesOpen) setProfiles([makeProfile(data, point, 0), makeProfile(data, point, 90)]);
       setLoading(false);
       setCacheInfo(await cacheStats());
     } catch (failure) {
       if (request !== requestId.current) return;
       setError('Elevation data is unavailable for this location. The provider may lack coverage, or the connection failed. Try again or select another location. No sample results are substituted.');
-      setLoading(false); setModel(null); setActionMenuOpen(false);
+      setLoading(false); setModel(null);
       setCacheInfo(await cacheStats());
     }
   }
@@ -317,7 +287,7 @@ function App() {
   }, [notice]);
 
   function selectPoint(point, name = 'Selected terrain point') {
-    setSelected(point); setPointName(name); setPendingSnap(null); setActionMenuOpen(false); setError('');
+    setSelected(point); setPointName(name); setPendingSnap(null); setError('');
     setDeletePromptId(null);
     dispatchAnalysis({ type: 'activate', id: null });
     setSearchOpen(false);
@@ -327,7 +297,7 @@ function App() {
     if (!model || !selected || outletIndex < 0) return;
     const request = ++requestId.current;
     const started = performance.now();
-    setLoading(true); setActionMenuOpen(false); setAnalysisPhase('calculating'); setError('');
+    setLoading(true); setAnalysisPhase('calculating'); setError('');
     try {
       const { result } = await terrainTask('calculate', { model, outlet: outletIndex, cacheEnabled: localCache });
       if (request !== requestId.current) return;
@@ -431,7 +401,6 @@ function App() {
     requestId.current++;
     setSelected(null); setPointName(''); setModel(null); setLoading(false);
     setPendingSnap(null); setProfiles([]); setProfilesOpen(false); setHoverPoint(null);
-    setActionMenuOpen(false);
     setError(''); setNotice(''); setProgress(0); setMode('point'); setFirstCorner(null);
     mapRef.current?.fitBounds(REGION_BOUNDS, { padding: [28, 28], maxZoom: 7 });
   }
@@ -440,7 +409,7 @@ function App() {
     setDeletePromptId(null);
     dispatchAnalysis({ type: 'activate', id: analysis.id });
     setModel(analysis.model); setSelected(analysis.point); setPointName(analysis.location || analysis.name);
-    setLoading(false); setError(''); setPendingSnap(null); setActionMenuOpen(false); setProfiles([]); setProfilesOpen(false); setHoverPoint(null); setMode('point'); setFirstCorner(null);
+    setLoading(false); setError(''); setPendingSnap(null); setProfiles([]); setProfilesOpen(false); setHoverPoint(null); setMode('point'); setFirstCorner(null);
     zoomResult(analysis);
     if (!analysis.model) fetchTerrain(analysis.point, analysis.location || analysis.name, analysis);
   }
@@ -466,7 +435,7 @@ function App() {
     dispatchAnalysis({ type: 'restore', items: restored, activeId: null });
     analysisSequence.current = restored.reduce((maximum, analysis) => Math.max(maximum, analysis.number), 0);
     setSelected(null); setPointName(''); setModel(null); setLoading(false); setError(''); setPendingSnap(null);
-    setProfiles([]); setProfilesOpen(false); setHoverPoint(null); setActionMenuOpen(false); setAnalysesOnly(false);
+    setProfiles([]); setProfilesOpen(false); setHoverPoint(null); setAnalysesOnly(false);
     setModal(null); setSidebarOpen(true);
     if (restored.length) mapRef.current.fitBounds(L.featureGroup(restored.map(analysis => L.geoJSON(analysis.boundary))).getBounds(), { padding: [65, 75], maxZoom: 14 });
   }
@@ -534,7 +503,7 @@ function App() {
         <div className="sidebar-footer"><span className={`connection-dot ${loading ? 'loading' : ''}`}/><span>{loading ? t('Connecting to elevation data') : model ? t('Terrain grid · {resolution} m', { resolution: format(model.resolution) }) : t(selected ? 'Terrain data unavailable' : 'Ready to analyze')}</span><button title={t('Data sources and limitations')} aria-label={t('Data sources and limitations')} onClick={() => setModal('sources')}><Info size={15}/></button></div>
       </aside>
       <section className="map-workspace">
-        <TerrainMap {...{ mapRef, model, selected, selectedElevation: elevation, loading, actionMenuOpen, deletePromptId, hasAnalysis: Boolean(current), results, activeId, pendingSnap, layers, hoverPoint, mode, aoi, areaHydrology, language }} profiles={profilesOpen ? profiles : []} onSelect={selectPoint} onDraw={handleDraw} onOutletClick={point => { const outlet = pointIndex(model, ...point); calculate(outlet, point); }} onAnalysisNumberClick={id => { const analysis = results.find(item => item.id === id); if (!analysis) return; if (analysis.id !== activeId) activateAnalysis(analysis); setActionMenuOpen(false); setDeletePromptId(id); setSidebarOpen(true); }} onDeleteAnalysis={() => deletePromptId && removeAnalysis(deletePromptId)} onDismissDelete={() => setDeletePromptId(null)}/>
+        <TerrainMap {...{ mapRef, model, selected, deletePromptId, hasAnalysis: Boolean(current), results, activeId, pendingSnap, layers, hoverPoint, mode, aoi, areaHydrology, language }} profiles={profilesOpen ? profiles : []} onSelect={selectPoint} onDraw={handleDraw} onOutletClick={point => { const outlet = pointIndex(model, ...point); calculate(outlet, point); }} onAnalysisNumberClick={id => { const analysis = results.find(item => item.id === id); if (!analysis) return; if (analysis.id !== activeId) activateAnalysis(analysis); setDeletePromptId(id); setSidebarOpen(true); }} onDeleteAnalysis={() => deletePromptId && removeAnalysis(deletePromptId)} onDismissDelete={() => setDeletePromptId(null)}/>
         <div className="map-topbar"><div className="map-search"><form onSubmit={search}><Search size={18}/><input aria-label={t('Search a place or coordinates')} placeholder={t('Search a place or coordinates')} value={query} onChange={event => { setQuery(event.target.value); setSearchOpen(true); }} onFocus={() => setSearchOpen(true)} onKeyDown={event => { if (event.key === 'Escape') setSearchOpen(false); }}/>{searching ? <LoaderCircle size={17} className="spin"/> : <kbd>↵</kbd>}</form>{searchOpen && <div className="search-results"><div className="search-heading">{t(query ? 'MATCHING PLACES' : 'EXPLORE THE REGION')}<button aria-label={t('Close search')} onClick={() => setSearchOpen(false)}><X size={14}/></button></div>{filteredPlaces.map(place => <button key={place.name} onClick={() => choosePlace(place)}><MapPin size={15}/><span>{t(place.name)}</span><ArrowUpRight size={13}/></button>)}<small>{t('Coordinates: latitude, longitude (WGS 84)')}</small></div>}</div></div>
         <div className="map-tools"><div className="tool-group zoom-tools"><IconButton icon={Plus} label={t('Zoom in')} onClick={() => mapRef.current.zoomIn()}/><IconButton icon={Minus} label={t('Zoom out')} onClick={() => mapRef.current.zoomOut()}/></div><div className="tool-group"><IconButton icon={LocateFixed} label={t('Go to selected point')} disabled={!selected} onClick={() => mapRef.current.setView(selected, 12)}/><IconButton icon={Maximize} label={t('Show Israel and neighbors')} onClick={() => mapRef.current.fitBounds(REGION_BOUNDS, { padding: [28, 28], maxZoom: 7 })}/></div></div>
         {mode !== 'point' && <div className="drawing-status"><span className="connection-dot"/>{t(mode === 'area' ? firstCorner ? 'Choose opposite corner' : 'Draw area of interest' : 'Choose profile endpoint')}<button onClick={() => { setMode('point'); setFirstCorner(null); }} aria-label={t('Cancel drawing')}><X size={14}/></button></div>}
