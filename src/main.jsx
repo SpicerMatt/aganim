@@ -62,7 +62,7 @@ function TerrainMap({ mapRef, model, selected, deletePromptId, onDeleteAnalysis,
   useEffect(() => {
     const map = L.map(element.current, { zoomControl: false, preferCanvas: true, minZoom: 5, maxZoom: 17 });
     mapRef.current = map;
-    map.fitBounds(REGION_BOUNDS, { padding: [28, 28], maxZoom: 7, animate: false });
+    map.setView([32.781942, 35.3277836], 13, { animate: false });
     L.control.scale({ position: 'bottomleft', imperial: false }).addTo(map);
     map.attributionControl.setPrefix(false);
     map.on('click', event => {
@@ -79,14 +79,23 @@ function TerrainMap({ mapRef, model, selected, deletePromptId, onDeleteAnalysis,
     if (!map) return;
     const base = L.tileLayer(layers.satellite
       ? 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
-      : 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}', {
-      attribution: layers.satellite ? 'Imagery &copy; Esri, Maxar, Earthstar Geographics' : 'Tiles &copy; Esri | Sources: Esri, HERE, Garmin, USGS, OpenStreetMap contributors', maxZoom: 17,
+      : 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
+      attribution: layers.satellite ? 'Imagery &copy; Esri, Maxar, Earthstar Geographics' : 'Map data: &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors | DEM: <a href="https://viewfinderpanoramas.org/">SRTM</a>, <a href="https://sonny.4lima.de/">Sonny</a> | map style: &copy; <a href="https://opentopomap.org/">OpenTopoMap</a> (<a href="https://creativecommons.org/licenses/by-sa/3.0/">CC-BY-SA</a>)', maxZoom: 17,
     }).addTo(map);
     return () => base.remove();
   }, [layers.satellite]);
   useEffect(() => {
+    if (!layers.satellite) return;
+    const labels = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', {
+      attribution: 'Place names &copy; Esri, HERE, Garmin, OpenStreetMap contributors, and the GIS user community',
+      maxZoom: 23,
+      pane: 'overlayPane',
+    }).addTo(mapRef.current);
+    return () => labels.remove();
+  }, [layers.satellite]);
+  useEffect(() => {
     if (!layers.hillshade) return;
-    const tile = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Elevation/World_Hillshade/MapServer/tile/{z}/{y}/{x}', { opacity: 0.3, attribution: 'Hillshade &copy; Esri, USGS' }).addTo(mapRef.current);
+    const tile = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Elevation/World_Hillshade/MapServer/tile/{z}/{y}/{x}', { opacity: 0.4, attribution: 'Hillshade &copy; Esri, USGS' }).addTo(mapRef.current);
     return () => tile.remove();
   }, [layers.hillshade]);
   useEffect(() => {
@@ -215,7 +224,7 @@ function App() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [pendingSnap, setPendingSnap] = useState(null);
-  const [layers, setLayers] = useState({ satellite: false, hillshade: true, contours: false, drainage: true });
+  const [layers, setLayers] = useState({ satellite: false, hillshade: false, contours: false, drainage: true });
   const [profiles, setProfiles] = useState([]);
   const [profilesOpen, setProfilesOpen] = useState(false);
   const [hoverPoint, setHoverPoint] = useState(null);
@@ -495,7 +504,7 @@ function App() {
             {error && <div className="error-message" role="alert"><AlertTriangle size={17}/><span>{t(error)}<button onClick={() => fetchTerrain(selected)}>{t('Retry terrain download')}</button></span></div>}
           </> : <div className="clean-map-prompt"><Crosshair size={25} strokeWidth={1.4}/><h2>{t('Select a point on the map')}</h2><p>{t('Add its watershed and surrounding drainage divide to the map.')}</p></div>}
           </section>
-          <section className="layers-section"><div className="section-title"><h3><Layers size={16}/>{t('Map layers')}</h3><SlidersHorizontal size={15}/></div><Toggle label={t('Drainage network')} icon={Route} checked={layers.drainage} onChange={value => setLayers(previous => ({ ...previous, drainage: value }))}/><Toggle label={t('Contour lines')} icon={Mountain} checked={layers.contours} onChange={value => setLayers(previous => ({ ...previous, contours: value }))}/><Toggle label={t('Hillshade')} icon={Layers} checked={layers.hillshade} onChange={value => setLayers(previous => ({ ...previous, hillshade: value }))}/><Toggle label={t('Satellite imagery')} icon={Globe2} checked={layers.satellite} onChange={value => setLayers(previous => ({ ...previous, satellite: value }))}/></section>
+          <section className="layers-section"><div className="section-title"><h3><Layers size={16}/>{t('Map layers')}</h3><SlidersHorizontal size={15}/></div><div className="map-style-selector" role="group" aria-label={t('Base map')}><button type="button" className={!layers.satellite ? 'active' : ''} aria-pressed={!layers.satellite} onClick={() => setLayers(previous => ({ ...previous, satellite: false }))}><Mountain size={15}/>{t('Topographic')}</button><button type="button" className={layers.satellite ? 'active' : ''} aria-pressed={layers.satellite} onClick={() => setLayers(previous => ({ ...previous, satellite: true }))}><Globe2 size={15}/>{t('Satellite')}</button></div><Toggle label={t('Drainage network')} icon={Route} checked={layers.drainage} onChange={value => setLayers(previous => ({ ...previous, drainage: value }))}/><Toggle label={t('Contour lines')} icon={Mountain} checked={layers.contours} onChange={value => setLayers(previous => ({ ...previous, contours: value }))}/><Toggle label={t('Hillshade')} icon={Layers} checked={layers.hillshade} onChange={value => setLayers(previous => ({ ...previous, hillshade: value }))}/></section>
           <div className="map-legend sidebar-legend"><span><i className="legend-area"/>{t('Watershed divide')}</span><span><i className="legend-river"/>{t('Streams')}</span><span><i className="legend-flow"/>{t('Downstream')}</span></div>
           <section className="cache-section"><div className="section-title"><h3><HardDrive size={16}/>{t('Local storage')}</h3><IconButton icon={cacheBusy ? LoaderCircle : Trash2} label={t('Clear local terrain cache')} disabled={loading || cacheBusy || !cacheInfo?.bytes} onClick={removeLocalCache}/></div><Toggle label={t('Cache terrain & watersheds')} icon={HardDrive} checked={localCache} disabled={loading || cacheBusy} onChange={value => { setLocalCache(value); setCacheEnabled(value); }}/><div className="cache-usage"><span>{t('{used} MB', { used: format((cacheInfo?.bytes || 0) / 1048576, 1) })}</span><span>{t('{limit} GB limit', { limit: format(MAX_CACHE_BYTES / 1073741824, 0) })}</span></div><progress aria-label={t('Local cache storage usage')} value={cacheInfo?.bytes || 0} max={MAX_CACHE_BYTES}/><div className="cache-counts">{t('{count} terrain areas', { count: format(cacheInfo?.models || 0) })} <span>·</span> {t('{count} watersheds', { count: format(cacheInfo?.watersheds || 0) })}</div><p>{t(cacheInfo?.available === false ? 'Browser storage unavailable. Analysis still works without caching.' : !localCache ? 'Cache disabled. Existing data stays stored until cleared.' : 'Saved on this device. Basemaps and new areas still need internet.')}</p></section>
         </div>

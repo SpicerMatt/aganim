@@ -53,7 +53,7 @@ The automated test suite covers area-based stream/divide extraction and partial 
 - Catchments reaching any edge of the available DEM are marked **partial**. The map shows the entire computed catchment even outside the area of interest. Downstream paths stop at the DEM boundary.
 - Small wadis, narrow ridges, culverts, terraces and sub-grid catchments may be missed. Filling depressions can produce artificial paths across lakes. Karst, groundwater, drainage engineering, rainfall and flood hydraulics are not modeled.
 - Elevations are nearest-cell samples. Profiles have 121 samples and show gaps beyond DEM coverage. Tiny catchments are displayed as `< 0.01 km2`, not as zero.
-- **Maps:** Esri World Topographic, World Imagery and World Hillshade. Attribution remains on the map. Political labels and boundaries follow the map provider.
+- **Maps:** OpenTopoMap is the default terrain basemap, with OpenStreetMap and SRTM source attribution and the CC-BY-SA map-style credit shown on the map. Esri World Imagery is available as a layer. Political labels and boundaries follow the selected map provider.
 - **Place search:** OpenStreetMap Nominatim, bounded to the wider region. Preset search, coordinate input and point selection remain available if geocoding fails.
 - No validated regional classified land-cover data is bundled, so no land-cover layer is represented as available.
 - Internet access is required for uncached elevation tiles, external map tiles and search. Cached terrain analysis can run without DEM network access after the app has loaded. Failed or missing data produces an explicit error and retry action. No mock results are substituted.
