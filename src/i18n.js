@@ -147,6 +147,8 @@ export const HEBREW = {
   'Grid spacing': 'גודל תא',
   'Flow model': 'מודל זרימה',
   'Map layers': 'שכבות מפה',
+  'Expand analysis panel': 'פתיחת חלונית הניתוחים',
+  'Collapse analysis panel': 'סגירת חלונית הניתוחים',
   'Base map': 'מפת בסיס',
   'Topographic': 'טופוגרפית',
   'Satellite': 'לוויין',

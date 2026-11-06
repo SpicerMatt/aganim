@@ -14,6 +14,23 @@
 .map-style-selector button{display:flex;align-items:center;justify-content:center;gap:7px;min-width:0;min-height:34px;padding:4px 7px;border-radius:3px;color:#718071;font-size:10px}
 .map-style-selector button.active{background:#fff;color:#2c654e;box-shadow:0 1px 3px #253c251c;font-weight:600}
 .map-style-selector button:hover{color:#22664d}
+.mobile-sheet-bar{display:none}
+@media(max-width:600px){
+	.main-layout{position:relative;display:block;flex:1 1 auto;height:auto;min-height:0}
+	.map-workspace{position:absolute;inset:0;width:100%;height:auto;min-height:0;border-bottom:0}
+	.sidebar{position:absolute;z-index:1200;left:8px;right:8px;bottom:0;width:auto;height:74px;max-height:82dvh;min-height:0;display:flex;flex-direction:column;overflow:hidden;border:1px solid #dfe5dd;border-bottom:0;border-radius:11px 11px 0 0;background:#fff;box-shadow:0 -5px 22px #243a2d18;transition:height .2s ease}
+	.main-layout.mobile-panel-open .sidebar{height:min(72dvh,580px)}
+	.main-layout.sidebar-hidden .sidebar{display:none}
+	.mobile-sheet-bar{display:block;flex:none;padding:0 10px}
+	.mobile-sheet-bar button{position:relative;display:flex;align-items:center;justify-content:center;gap:8px;width:100%;height:72px;padding:17px 8px 0;color:#526b49;font-size:12px;font-weight:600;touch-action:manipulation}
+	.mobile-sheet-grip{position:absolute;top:8px;left:50%;width:32px;height:4px;transform:translateX(-50%);border-radius:3px;background:#ccd5cb}
+	.mobile-sheet-title{max-width:calc(100% - 65px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+	.mobile-sheet-bar .analysis-count{width:22px;height:22px;font-size:10px}
+	.sidebar-scroll{display:none;flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:7px 18px max(16px,env(safe-area-inset-bottom))}
+	.main-layout.mobile-panel-open .sidebar-scroll{display:block}
+	.sidebar-footer{display:none}
+	.area-actions{margin-bottom:13px}
+}
 .map-action-menu{position:absolute;z-index:800;width:min(290px,calc(100% - 24px));display:grid;gap:7px;padding:10px;background:#fffffff7;border:1px solid #e0e7dc;border-radius:6px;box-shadow:0 6px 24px #263e2630;color:#526849;pointer-events:none}
 .map-action-heading{display:flex;align-items:center;gap:7px;font-size:10px;color:#708665;padding:2px 3px}
 .map-action-heading strong{font-weight:600}
