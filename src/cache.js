@@ -1,5 +1,5 @@
 export const CACHE_VERSION = 'terrain-d8-v2';
-export const MAX_CACHE_BYTES = 128 * 1024 * 1024;
+export const MAX_CACHE_BYTES = 1024 * 1024 * 1024;
 const DATABASE = 'watershed-local';
 let databasePromise;
 let available = true;

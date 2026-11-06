@@ -13,6 +13,8 @@ export function analysesReducer(state, action) {
     }
     case 'activate':
       return action.id === null || state.items.some(item => item.id === action.id) ? { ...state, activeId: action.id } : state;
+    case 'restore':
+      return { items: action.items, activeId: action.activeId ?? null };
     case 'rename': {
       const name = action.name.trimStart().slice(0, 60);
       const items = state.items.map(item => item.id === action.id ? { ...item, name } : item);

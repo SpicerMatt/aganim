@@ -5,10 +5,26 @@ import { buildModel, delineate, delineateCached, exportCollection, makeProfile, 
 import { readCached, writeCached, clearCache, cacheStats, setCacheEnabled, MAX_CACHE_BYTES } from '../src/cache.js';
 import { createTranslator } from '../src/i18n.js';
 import { EMPTY_ANALYSES, createWatershedAnalysis, analysesReducer } from '../src/analyses.js';
+import { deleteAnalysisCollection, listAnalysisCollections, saveAnalysisCollection } from '../src/collections.js';
 
 const width = 32;
 const terrain = Float32Array.from({ length: width * width }, (_, index) => 1000 - Math.floor(index / width) * 5 + Math.abs(index % width - 16) * 4);
 const model = buildModel(terrain, width, width);
+
+test('named analysis collections persist complete geometries without DEM flow arrays', async () => {
+  const outlet = 20 * width + 16;
+  const analysis = createWatershedAnalysis(delineate(model, outlet), { id: 'basin-a', number: 1, name: 'Upper Wadi', location: 'Jordan River', point: indexPoint(model, outlet), model });
+  const saved = await saveAnalysisCollection('My catchments', [analysis]);
+  const collections = await listAnalysisCollections();
+  assert.equal(collections[0].id, saved.id);
+  assert.equal(collections[0].name, 'My catchments');
+  assert.equal(collections[0].analyses[0].name, 'Upper Wadi');
+  assert.deepEqual(collections[0].analyses[0].boundary, analysis.boundary);
+  assert.equal(collections[0].analyses[0].model, undefined);
+  assert.equal(collections[0].analyses[0].mask, undefined);
+  assert.equal(await deleteAnalysisCollection(saved.id), true);
+  assert.equal((await listAnalysisCollections()).some(collection => collection.id === saved.id), false);
+});
 
 test('analyses start empty and retain independent watersheds from different DEM windows', () => {
   assert.equal(EMPTY_ANALYSES.items.length, 0);
@@ -26,6 +42,9 @@ test('analyses start empty and retain independent watersheds from different DEM 
   assert.equal(state.items[0].model, model);
   assert.equal(state.items[1].model, shiftedModel);
   assert.equal(state.items[0].number, 1);
+  const restored = analysesReducer(state, { type: 'restore', items: [{ id: 'restored' }], activeId: null });
+  assert.deepEqual(restored.items, [{ id: 'restored' }]);
+  assert.equal(restored.activeId, null);
   const collection = exportCollection(state.items);
   assert.equal(collection.features.length, 6);
   assert.equal(collection.features[0].properties.analysis_id, 'first');
