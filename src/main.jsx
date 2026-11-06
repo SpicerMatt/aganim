@@ -51,13 +51,14 @@ function terrainContours(model) {
   }))) } })) };
 }
 
-function TerrainMap({ mapRef, model, selected, selectedElevation, loading, hasAnalysis, results, activeId, pendingSnap, layers, profiles, hoverPoint, mode, onSelect, onDraw, onCalculatePoint, onCalculateSnap, aoi, areaHydrology, language }) {
+function TerrainMap({ mapRef, model, selected, selectedElevation, loading, actionMenuOpen, deletePromptId, onDeleteAnalysis, onDismissDelete, hasAnalysis, results, activeId, pendingSnap, layers, profiles, hoverPoint, mode, onSelect, onDraw, onOutletClick, onAnalysisNumberClick, aoi, areaHydrology, language }) {
   const t = createTranslator(language);
   const element = useRef(null);
   const [actionPosition, setActionPosition] = useState(null);
-  const handlers = useRef({ onSelect, onDraw, mode });
+  const [deletePosition, setDeletePosition] = useState(null);
+  const handlers = useRef({ onSelect, onDraw, onOutletClick, onAnalysisNumberClick, mode });
   const groups = useRef({});
-  handlers.current = { onSelect, onDraw, mode };
+  handlers.current = { onSelect, onDraw, onOutletClick, onAnalysisNumberClick, mode };
   useEffect(() => {
     const map = L.map(element.current, { zoomControl: false, preferCanvas: true, minZoom: 5, maxZoom: 17 });
     mapRef.current = map;
@@ -102,7 +103,7 @@ function TerrainMap({ mapRef, model, selected, selectedElevation, loading, hasAn
       L.geoJSON(result.boundary, { style: { color: '#dc4541', weight: 2.5, fillColor: color, fillOpacity: result.id === activeId ? 0.15 : 0.07 } }).bindTooltip(`${analysisName} · ${formatArea(result.area)} ${t('km²')} · ${t('Watershed divide')}`).addTo(group);
       if (layers.drainage) L.geoJSON(result.channels, { style: { color: '#247dcc', weight: 1.8, opacity: 0.95, interactive: false } }).addTo(group);
       L.geoJSON(result.downstream, { style: { color: '#246eb5', weight: 2.5, dashArray: '5 6', interactive: false } }).addTo(group);
-      L.marker(result.point, { icon: L.divIcon({ className: 'analysis-outlet', html: `<span>${Number(result.number) || index + 1}</span>`, iconSize: [23, 23], iconAnchor: [11.5, 11.5] }) }).bindTooltip(analysisName).addTo(group);
+      L.marker(result.point, { icon: L.divIcon({ className: 'analysis-outlet', html: `<span>${Number(result.number) || index + 1}</span>`, iconSize: [23, 23], iconAnchor: [11.5, 11.5] }), zIndexOffset: 900 }).bindTooltip(analysisName).on('click', event => { L.DomEvent.stopPropagation(event); handlers.current.onAnalysisNumberClick(result.id); }).addTo(group);
     });
     return () => group.remove();
   }, [results, activeId, layers.drainage, language]);
@@ -118,9 +119,10 @@ function TerrainMap({ mapRef, model, selected, selectedElevation, loading, hasAn
     if (selected) {
       const marker = L.marker(selected, { icon: L.divIcon({ className: 'point-marker', html: '<span class="point-ring"><i></i></span>', iconSize: [30, 30], iconAnchor: [15, 15] }), zIndexOffset: 500 }).addTo(group);
       marker.bindTooltip(t('Selected point · {coordinates}', { coordinates: `${selected[0].toFixed(4)}, ${selected[1].toFixed(4)}` }), { direction: 'top', offset: [0, -16] });
+      marker.on('click', event => { L.DomEvent.stopPropagation(event); handlers.current.onOutletClick(selected); });
     }
     if (pendingSnap && selected) {
-      L.circleMarker(pendingSnap.point, { radius: 9, color: '#c27b26', fillColor: '#fbe8c7', fillOpacity: 1, weight: 2 }).bindTooltip(t('Proposed channel outlet'), { permanent: true, direction: 'top' }).addTo(group);
+      L.marker(pendingSnap.point, { icon: L.divIcon({ className: 'proposed-outlet-marker', html: '<span></span>', iconSize: [24, 24], iconAnchor: [12, 12] }), zIndexOffset: 700 }).bindTooltip(t('Proposed channel outlet'), { permanent: true, direction: 'top' }).on('click', event => { L.DomEvent.stopPropagation(event); handlers.current.onOutletClick(pendingSnap.point); }).addTo(group);
       L.polyline([selected, pendingSnap.point], { color: '#bc7f39', dashArray: '4 5', weight: 2 }).addTo(group);
     }
     profiles.forEach((profile, index) => {
@@ -133,12 +135,12 @@ function TerrainMap({ mapRef, model, selected, selectedElevation, loading, hasAn
   }, [selected, pendingSnap, profiles, aoi, language]);
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !selected || loading || !Number.isFinite(selectedElevation)) { setActionPosition(null); return; }
+    if (!map || !actionMenuOpen || !selected || loading || !Number.isFinite(selectedElevation)) { setActionPosition(null); return; }
     const updatePosition = () => {
       const point = map.latLngToContainerPoint(selected);
       const size = map.getSize();
       const width = Math.min(290, size.x - 24);
-      const height = pendingSnap ? 182 : 124;
+      const height = pendingSnap ? 146 : 116;
       let left = point.x + 20;
       if (left + width > size.x - 12) left = point.x - width - 20;
       left = Math.max(12, Math.min(left, size.x - width - 12));
@@ -151,7 +153,29 @@ function TerrainMap({ mapRef, model, selected, selectedElevation, loading, hasAn
     observer.observe(element.current);
     updatePosition();
     return () => { map.off('move zoom resize', updatePosition); window.removeEventListener('resize', updatePosition); observer.disconnect(); };
-  }, [selected, selectedElevation, loading, pendingSnap, mapRef]);
+  }, [selected, selectedElevation, loading, actionMenuOpen, pendingSnap, mapRef]);
+  useEffect(() => {
+    const map = mapRef.current;
+    const analysis = results.find(item => item.id === deletePromptId);
+    if (!map || !analysis) { setDeletePosition(null); return; }
+    const updatePosition = () => {
+      const point = map.latLngToContainerPoint(analysis.point);
+      const size = map.getSize();
+      const width = Math.min(250, size.x - 24);
+      const height = 88;
+      let left = point.x + 18;
+      if (left + width > size.x - 12) left = point.x - width - 18;
+      left = Math.max(12, Math.min(left, size.x - width - 12));
+      const top = Math.max(58, Math.min(point.y - height - 14, size.y - height - 18));
+      setDeletePosition({ left, top });
+    };
+    map.on('move zoom resize', updatePosition);
+    window.addEventListener('resize', updatePosition);
+    const observer = new ResizeObserver(updatePosition);
+    observer.observe(element.current);
+    updatePosition();
+    return () => { map.off('move zoom resize', updatePosition); window.removeEventListener('resize', updatePosition); observer.disconnect(); };
+  }, [deletePromptId, results, mapRef]);
   useEffect(() => {
     if (!hoverPoint) return;
     const marker = L.circleMarker(hoverPoint, { radius: 6, color: '#fff', weight: 2, fillColor: '#1b7155', fillOpacity: 1 }).addTo(mapRef.current);
@@ -159,10 +183,13 @@ function TerrainMap({ mapRef, model, selected, selectedElevation, loading, hasAn
   }, [hoverPoint]);
   return <>
     <div ref={element} id="terrain-map" dir="ltr" className={`terrain-map ${mode !== 'point' ? 'drawing' : ''}`} aria-label={t('Interactive terrain map of Israel and neighboring countries')}/>
-    {actionPosition && <div className="map-action-menu" dir={language === 'he' ? 'rtl' : 'ltr'} style={actionPosition} onMouseDown={event => event.stopPropagation()}>
-      <div className="map-action-heading"><MapPin size={15}/><strong>{t('Choose watershed outlet')}</strong></div>
+    {actionPosition && <div className="map-action-menu" dir={language === 'he' ? 'rtl' : 'ltr'} style={actionPosition}>
+      <div className="map-action-heading"><MapPin size={15}/><strong>{t(pendingSnap ? 'Nearby drainage channel' : hasAnalysis ? 'Outlet ready to recalculate' : 'Outlet ready')}</strong></div>
       <div className="map-action-elevation">{t('Selected point')} · <bdi>{format(selectedElevation)} {t('m')}</bdi></div>
-      {pendingSnap ? <><button className="button button-secondary full" onClick={onCalculatePoint}>{t('Calculate at selected point')}</button><button className="button button-primary full" onClick={onCalculateSnap}>{t('Use channel outlet · {distance} m', { distance: format(pendingSnap.distance) })}</button></> : <button className="button button-primary full" onClick={onCalculatePoint}><Waves size={16}/>{t(hasAnalysis ? 'Recalculate watershed' : 'Calculate at selected point')}</button>}
+      <p className="map-action-hint">{t(pendingSnap ? 'Click the original marker or the marked channel outlet to calculate there. Click elsewhere to suggest a new outlet.' : 'Click the marked point to calculate here. Click elsewhere to suggest a new outlet.')}</p>
+    </div>}
+    {deletePosition && <div className="map-delete-menu" dir={language === 'he' ? 'rtl' : 'ltr'} style={deletePosition}>
+      <button className="delete-confirm-button" onClick={onDeleteAnalysis}>{t('Remove')}</button>
     </div>}
   </>;
 }
@@ -209,6 +236,8 @@ function App() {
   const results = analysisState.items;
   const activeId = analysisState.activeId;
   const [loading, setLoading] = useState(false);
+  const [actionMenuOpen, setActionMenuOpen] = useState(false);
+  const [deletePromptId, setDeletePromptId] = useState(null);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -247,6 +276,7 @@ function App() {
     const request = ++requestId.current;
     const reuse = model && pointIndex(model, ...point) >= 0 ? model : null;
     setLoading(true); setProgress(0); setError(''); setPendingSnap(null);
+    setActionMenuOpen(false);
     setAnalysisPhase('loading');
     if (!reuse) { setModel(null); setProfiles([]); }
     try {
@@ -259,14 +289,16 @@ function App() {
       setSelected(point);
       setPointName(name);
       setPendingSnap(response.proposed?.distance > data.resolution * 0.8 ? response.proposed : null);
+      setActionMenuOpen(true);
       if (profilesOpen) setProfiles([makeProfile(data, point, 0), makeProfile(data, point, 90)]);
-      mapRef.current.setView(point, 12);
+      if (response.proposed?.distance > data.resolution * 0.8) mapRef.current.fitBounds([point, response.proposed.point], { padding: [110, 110], maxZoom: 15 });
+      else mapRef.current.setView(point, 12);
       setLoading(false);
       setCacheInfo(await cacheStats());
     } catch (failure) {
       if (request !== requestId.current) return;
       setError('Elevation data is unavailable for this location. The provider may lack coverage, or the connection failed. Try again or select another location. No sample results are substituted.');
-      setLoading(false); setModel(null);
+      setLoading(false); setModel(null); setActionMenuOpen(false);
       setCacheInfo(await cacheStats());
     }
   }
@@ -282,7 +314,9 @@ function App() {
   }, [notice]);
 
   function selectPoint(point, name = 'Selected terrain point') {
-    setSelected(point); setPointName(name); setPendingSnap(null); setError('');
+    setSelected(point); setPointName(name); setPendingSnap(null); setActionMenuOpen(false); setError('');
+    setDeletePromptId(null);
+    setDeletePromptId(null);
     dispatchAnalysis({ type: 'activate', id: null });
     setSearchOpen(false);
     fetchTerrain(point, name, null);
@@ -291,7 +325,7 @@ function App() {
     if (!model || !selected || outletIndex < 0) return;
     const request = ++requestId.current;
     const started = performance.now();
-    setLoading(true); setAnalysisPhase('calculating'); setError('');
+    setLoading(true); setActionMenuOpen(false); setAnalysisPhase('calculating'); setError('');
     try {
       const { result } = await terrainTask('calculate', { model, outlet: outletIndex, cacheEnabled: localCache });
       if (request !== requestId.current) return;
@@ -306,6 +340,7 @@ function App() {
     } catch (failure) {
       if (request !== requestId.current) return;
       setLoading(false); setError('The watershed calculation failed. Try another outlet or reload terrain data.');
+      setActionMenuOpen(true);
     }
   }
   function requestWatershed() {
@@ -396,18 +431,21 @@ function App() {
     requestId.current++;
     setSelected(null); setPointName(''); setModel(null); setLoading(false);
     setPendingSnap(null); setProfiles([]); setProfilesOpen(false); setHoverPoint(null);
+    setActionMenuOpen(false);
     setError(''); setNotice(''); setProgress(0); setMode('point'); setFirstCorner(null);
     mapRef.current?.fitBounds(REGION_BOUNDS, { padding: [28, 28], maxZoom: 7 });
   }
   function activateAnalysis(analysis) {
     requestId.current++;
+    setDeletePromptId(null);
     dispatchAnalysis({ type: 'activate', id: analysis.id });
     setModel(analysis.model); setSelected(analysis.point); setPointName(analysis.location || analysis.name);
-    setLoading(false); setError(''); setPendingSnap(null); setProfiles([]); setProfilesOpen(false); setHoverPoint(null); setMode('point'); setFirstCorner(null);
+    setLoading(false); setError(''); setPendingSnap(null); setActionMenuOpen(true); setProfiles([]); setProfilesOpen(false); setHoverPoint(null); setMode('point'); setFirstCorner(null);
     zoomResult(analysis);
   }
   function removeAnalysis(id) {
     const remaining = results.filter(analysis => analysis.id !== id);
+    setDeletePromptId(null);
     dispatchAnalysis({ type: 'remove', id });
     if (activeId === id) {
       if (remaining.length) activateAnalysis(remaining.at(-1));
@@ -416,7 +454,7 @@ function App() {
   }
   function clearMap() {
     resetSelection(); dispatchAnalysis({ type: 'clear' });
-    analysisSequence.current = 0;
+    analysisSequence.current = 0; setDeletePromptId(null);
     setAoi(null); setAreaHydrology(null); setQuery(''); setSearchOpen(false);
   }
   function download() {
@@ -451,7 +489,7 @@ function App() {
         <div className="sidebar-scroll">
           <div className="sidebar-heading"><span className="eyebrow">{t('A CLOSER LOOK AT THE LAND')}</span><h1>{t('Terrain explorer')}</h1><p>{t('Israel and its neighboring landscapes.')}</p></div>
           <div className="area-actions"><button className="button button-secondary full" onClick={() => { setMode(mode === 'area' ? 'point' : 'area'); setFirstCorner(null); setNotice('Area of interest: choose two opposite corners.'); }}><Scan size={15}/>{t('Draw area of interest')}</button>{aoi && <IconButton icon={X} label={t('Clear area of interest')} onClick={() => { setAoi(null); setAreaHydrology(null); }}/>}</div>
-          <section className="analyses-section" ref={analysisListRef}><div className="section-title"><h3><Layers size={16}/>{t('Map analyses')} <span className="analysis-count">{results.length}</span></h3><IconButton icon={Scan} label={t('Fit all analyses')} disabled={!results.length} onClick={zoomAllAnalyses}/></div>{results.length ? <ol className="analysis-list">{results.map(analysis => <li key={analysis.id} data-analysis-id={analysis.id} className={analysis.id === activeId ? 'active' : ''}><button className="analysis-select" aria-pressed={analysis.id === activeId} onClick={() => activateAnalysis(analysis)}><span className="analysis-number">{analysis.number}</span><span><strong>{analysis.name || t('Watershed')}</strong><small>{t(analysis.location || 'Selected terrain point')} · {formatArea(analysis.area)} {t('km²')}</small></span></button><input className="analysis-name-input" aria-label={t('Name watershed {number}', { number: analysis.number })} value={analysis.name} maxLength={60} placeholder={t('Name this watershed')} onFocus={() => dispatchAnalysis({ type: 'activate', id: analysis.id })} onChange={event => dispatchAnalysis({ type: 'rename', id: analysis.id, name: event.target.value })}/><IconButton icon={X} label={t('Remove analysis {number}', { number: analysis.number })} onClick={() => removeAnalysis(analysis.id)}/></li>)}</ol> : <p className="analysis-empty">{t('No analyses on the map yet.')}</p>}</section>
+          <section className="analyses-section" ref={analysisListRef}><div className="section-title"><h3><Layers size={16}/>{t('Map analyses')} <span className="analysis-count">{results.length}</span></h3><IconButton icon={Scan} label={t('Fit all analyses')} disabled={!results.length} onClick={zoomAllAnalyses}/></div>{results.length ? <ol className="analysis-list">{results.map(analysis => <li key={analysis.id} data-analysis-id={analysis.id} className={analysis.id === activeId ? 'active' : ''}><button className="analysis-select" aria-pressed={analysis.id === activeId} onClick={() => activateAnalysis(analysis)}><span className="analysis-number">{analysis.number}</span><span><strong>{analysis.name || t('Watershed')}</strong><small>{t(analysis.location || 'Selected terrain point')} · {formatArea(analysis.area)} {t('km²')}</small></span></button><input className="analysis-name-input" aria-label={t('Name watershed {number}', { number: analysis.number })} value={analysis.name} maxLength={60} placeholder={t('Name this watershed')} onFocus={() => dispatchAnalysis({ type: 'activate', id: analysis.id })} onChange={event => dispatchAnalysis({ type: 'rename', id: analysis.id, name: event.target.value })}/></li>)}</ol> : <p className="analysis-empty">{t('No analyses on the map yet.')}</p>}</section>
           <section className="point-section">{selected ? <><div className="section-label"><span><MapPin size={14}/>{t('SELECTED POINT')}</span><span className="point-status">{t(loading ? 'Loading' : index >= 0 ? 'DEM verified' : 'Outside coverage')}</span></div>
             <h2>{t(pointName)}</h2><div className="coordinates" dir="ltr"><span>{selected[0].toFixed(5)}° N</span><span>{selected[1].toFixed(5)}° E</span><IconButton icon={Crosshair} label={t('Center on selected point')} onClick={() => mapRef.current.setView(selected, 12)}/></div>
             <div className="elevation-readout"><Mountain size={24} strokeWidth={1.4}/><strong>{loading ? <span className="skeleton-number"/> : <bdi dir="ltr">{format(elevation)}</bdi>}</strong><span>{t('m')}<span>{t('above sea level')}</span></span><span className="dem-tag">DEM</span></div>
@@ -478,7 +516,7 @@ function App() {
         <div className="sidebar-footer"><span className={`connection-dot ${loading ? 'loading' : ''}`}/><span>{loading ? t('Connecting to elevation data') : model ? t('Terrain grid · {resolution} m', { resolution: format(model.resolution) }) : t(selected ? 'Terrain data unavailable' : 'Ready to analyze')}</span><button title={t('Data sources and limitations')} aria-label={t('Data sources and limitations')} onClick={() => setModal('sources')}><Info size={15}/></button></div>
       </aside>
       <section className="map-workspace">
-        <TerrainMap {...{ mapRef, model, selected, selectedElevation: elevation, loading, hasAnalysis: Boolean(current), results, activeId, pendingSnap, layers, hoverPoint, mode, aoi, areaHydrology, language }} profiles={profilesOpen ? profiles : []} onSelect={selectPoint} onDraw={handleDraw} onCalculatePoint={() => current ? requestWatershed() : calculate(index, selected)} onCalculateSnap={() => pendingSnap && calculate(pendingSnap.index, pendingSnap.point)}/>
+        <TerrainMap {...{ mapRef, model, selected, selectedElevation: elevation, loading, actionMenuOpen, deletePromptId, hasAnalysis: Boolean(current), results, activeId, pendingSnap, layers, hoverPoint, mode, aoi, areaHydrology, language }} profiles={profilesOpen ? profiles : []} onSelect={selectPoint} onDraw={handleDraw} onOutletClick={point => { const outlet = pointIndex(model, ...point); calculate(outlet, point); }} onAnalysisNumberClick={id => { const analysis = results.find(item => item.id === id); if (!analysis) return; if (analysis.id !== activeId) activateAnalysis(analysis); setActionMenuOpen(false); setDeletePromptId(id); setSidebarOpen(true); }} onDeleteAnalysis={() => deletePromptId && removeAnalysis(deletePromptId)} onDismissDelete={() => setDeletePromptId(null)}/>
         <div className="map-topbar"><div className="map-search"><form onSubmit={search}><Search size={18}/><input aria-label={t('Search a place or coordinates')} placeholder={t('Search a place or coordinates')} value={query} onChange={event => { setQuery(event.target.value); setSearchOpen(true); }} onFocus={() => setSearchOpen(true)} onKeyDown={event => { if (event.key === 'Escape') setSearchOpen(false); }}/>{searching ? <LoaderCircle size={17} className="spin"/> : <kbd>↵</kbd>}</form>{searchOpen && <div className="search-results"><div className="search-heading">{t(query ? 'MATCHING PLACES' : 'EXPLORE THE REGION')}<button aria-label={t('Close search')} onClick={() => setSearchOpen(false)}><X size={14}/></button></div>{filteredPlaces.map(place => <button key={place.name} onClick={() => choosePlace(place)}><MapPin size={15}/><span>{t(place.name)}</span><ArrowUpRight size={13}/></button>)}<small>{t('Coordinates: latitude, longitude (WGS 84)')}</small></div>}</div></div>
         <div className="map-tools"><div className="tool-group zoom-tools"><IconButton icon={Plus} label={t('Zoom in')} onClick={() => mapRef.current.zoomIn()}/><IconButton icon={Minus} label={t('Zoom out')} onClick={() => mapRef.current.zoomOut()}/></div><div className="tool-group"><IconButton icon={LocateFixed} label={t('Go to selected point')} disabled={!selected} onClick={() => mapRef.current.setView(selected, 12)}/><IconButton icon={Maximize} label={t('Show Israel and neighbors')} onClick={() => mapRef.current.fitBounds(REGION_BOUNDS, { padding: [28, 28], maxZoom: 7 })}/></div></div>
         {mode !== 'point' && <div className="drawing-status"><span className="connection-dot"/>{t(mode === 'area' ? firstCorner ? 'Choose opposite corner' : 'Draw area of interest' : 'Choose profile endpoint')}<button onClick={() => { setMode('point'); setFirstCorner(null); }} aria-label={t('Cancel drawing')}><X size={14}/></button></div>}
