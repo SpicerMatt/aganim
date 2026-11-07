@@ -113,7 +113,8 @@ function TerrainMap({ mapRef, model, selected, deletePromptId, onDeleteAnalysis,
       const color = WATERSHED_COLOR;
       L.geoJSON(result.boundary, { style: { color: '#ffffff', weight: 5, fill: false, interactive: false } }).addTo(group);
       const analysisName = result.name || t('Watershed');
-      L.geoJSON(result.boundary, { style: { color: '#dc4541', weight: 2.5, fillColor: color, fillOpacity: result.id === activeId ? 0.15 : 0.07 } }).bindTooltip(`${analysisName} · ${formatArea(result.area)} ${t('km²')} · ${t('Watershed divide')}`).addTo(group);
+      const partialLabel = result.partial ? ` · ${t('Partial')}` : '';
+      L.geoJSON(result.boundary, { style: { color: '#dc4541', weight: 2.5, fillColor: color, fillOpacity: result.id === activeId ? 0.15 : 0.07 } }).bindTooltip(`${analysisName} · ${formatArea(result.area)} ${t('km²')} · ${t('Watershed divide')}${partialLabel}`).addTo(group);
       if (layers.drainage) L.geoJSON(result.channels, { style: { color: '#247dcc', weight: 1.8, opacity: 0.95, interactive: false } }).addTo(group);
       L.geoJSON(result.downstream, { style: { color: '#246eb5', weight: 2.5, dashArray: '5 6', interactive: false } }).addTo(group);
       L.marker(result.point, { icon: L.divIcon({ className: 'analysis-outlet', html: `<span>${Number(result.number) || index + 1}</span>`, iconSize: [23, 23], iconAnchor: [11.5, 11.5] }), zIndexOffset: 900 }).bindTooltip(analysisName).on('click', event => { L.DomEvent.stopPropagation(event); handlers.current.onAnalysisNumberClick(result.id); }).addTo(group);
@@ -291,7 +292,8 @@ function App() {
         if (profilesOpen) setProfiles([makeProfile(data, outletPoint, 0), makeProfile(data, outletPoint, 90)]);
         setLoading(false);
         setCacheInfo(await cacheStats());
-        if (response.proposed?.distance > data.resolution * 0.8) setNotice('Watershed outlet moved to the nearest drainage channel.');
+        if (response.expansionWarning) setNotice(response.expansionWarning);
+        else if (response.proposed?.distance > data.resolution * 0.8) setNotice('Watershed outlet moved to the nearest drainage channel.');
         else if (response.result.area < 0.08) setNotice('Very little upslope area drains to this point. For a ridge or summit, try an outlet in a wadi farther downslope.');
         return;
       }
@@ -528,6 +530,7 @@ function App() {
           <section className="point-section">{selected ? <><div className="section-label"><span><MapPin size={14}/>{t('SELECTED POINT')}</span><span className="point-status">{t(loading ? 'Loading' : index >= 0 ? 'DEM verified' : 'Outside coverage')}</span></div>
             <h2>{t(pointName)}</h2><div className="coordinates" dir="ltr"><span>{selected[0].toFixed(5)}° N</span><span>{selected[1].toFixed(5)}° E</span><IconButton icon={Crosshair} label={t('Center on selected point')} onClick={() => mapRef.current.setView(selected, 12)}/></div>
             {loading ? <div className="loading-status"><LoaderCircle size={14} className="spin"/><span>{t(analysisPhase === 'calculating' ? 'Calculating watershed in background…' : 'Loading elevation tiles… {progress}%', { progress: format(progress * 100) })}</span></div> : index < 0 ? <button className="button button-primary full" onClick={() => fetchTerrain(selected, pointName, null, true)}><Download size={16}/>{t('Retry point analysis')}</button> : <p className="point-action-hint">{t(current ? 'Select another map point to analyze another watershed.' : 'The watershed will be calculated automatically when you select a point.')}</p>}
+            {current?.partial && <p className="partial-catchment-notice" role="status">{t('The basin reaches the edge of available elevation data and is partial.')}</p>}
             {error && <div className="error-message" role="alert"><AlertTriangle size={17}/><span>{t(error)}<button onClick={() => fetchTerrain(selected, pointName, null, true)}>{t('Retry terrain download')}</button></span></div>}
           </> : <div className="clean-map-prompt"><Crosshair size={25} strokeWidth={1.4}/><h2>{t('Select a point on the map')}</h2><p>{t('Add its watershed and surrounding drainage divide to the map.')}</p></div>}
           </section>

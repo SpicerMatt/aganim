@@ -115,20 +115,23 @@ export function buildModel(elevations, width, height, origin = [0, 0], latitude 
   return { elevations, width, height, origin, resolution, flow, firstChild, nextSibling, accumulation };
 }
 
-export async function loadModel(lat, lng, onProgress = () => {}) {
+export async function loadModel(lat, lng, onProgress = () => {}, windowTiles = 3) {
+  if (!Number.isInteger(windowTiles) || windowTiles < 3 || windowTiles % 2 === 0) throw new RangeError('Terrain window must use an odd number of tiles, at least 3');
   const [pixelX, pixelY] = project(lat, lng);
-  const tileX = Math.floor(pixelX / TILE) - 1;
-  const tileY = Math.floor(pixelY / TILE) - 1;
-  const key = `model:${ZOOM}:${tileX}:${tileY}`;
+  const radius = Math.floor(windowTiles / 2);
+  const tileX = Math.floor(pixelX / TILE) - radius;
+  const tileY = Math.floor(pixelY / TILE) - radius;
+  const key = windowTiles === 3 ? `model:${ZOOM}:${tileX}:${tileY}` : `model:${ZOOM}:${tileX}:${tileY}:${windowTiles}`;
+  const tileCount = windowTiles * windowTiles;
   const cached = await readCached(key);
-  if (cached) { onProgress(1); return { ...cached, cache: { source: 'local', saved: true, tilesLocal: 9, tilesDownloaded: 0 } }; }
-  const width = TILE * 3;
+  if (cached) { onProgress(1); return { ...cached, windowTiles, cache: { source: 'local', saved: true, tilesLocal: tileCount, tilesDownloaded: 0 } }; }
+  const width = TILE * windowTiles;
   const elevations = new Float32Array(width * width);
   let completed = 0;
   let tilesLocal = 0;
-  await Promise.all(Array.from({ length: 9 }, async (_, tileIndex) => {
-    const column = tileIndex % 3;
-    const row = Math.floor(tileIndex / 3);
+  await Promise.all(Array.from({ length: tileCount }, async (_, tileIndex) => {
+    const column = tileIndex % windowTiles;
+    const row = Math.floor(tileIndex / windowTiles);
     const tileKey = `tile:${ZOOM}:${tileX + column}:${tileY + row}`;
     let tile = await readCached(tileKey);
     if (tile) tilesLocal++;
@@ -151,13 +154,13 @@ export async function loadModel(lat, lng, onProgress = () => {}) {
       await writeCached(tileKey, tile, 'tile', tile.byteLength);
     }
     for (let tileRow = 0; tileRow < TILE; tileRow++) elevations.set(tile.subarray(tileRow * TILE, (tileRow + 1) * TILE), (row * TILE + tileRow) * width + column * TILE);
-    onProgress(++completed / 9);
+    onProgress(++completed / tileCount);
   }));
-  const centerLatitude = unproject((tileX + 1.5) * TILE, (tileY + 1.5) * TILE)[0];
-  const model = { ...buildModel(elevations, width, width, [tileX * TILE, tileY * TILE], centerLatitude), key };
+  const centerLatitude = unproject((tileX + windowTiles / 2) * TILE, (tileY + windowTiles / 2) * TILE)[0];
+  const model = { ...buildModel(elevations, width, width, [tileX * TILE, tileY * TILE], centerLatitude), key, windowTiles };
   const bytes = Object.values(model).reduce((sum, value) => sum + (ArrayBuffer.isView(value) ? value.byteLength : 0), 256);
   const saved = await writeCached(key, model, 'model', bytes);
-  return { ...model, cache: { source: tilesLocal === 9 ? 'local tiles' : 'download', saved, tilesLocal, tilesDownloaded: 9 - tilesLocal } };
+  return { ...model, cache: { source: tilesLocal === tileCount ? 'local tiles' : 'download', saved, tilesLocal, tilesDownloaded: tileCount - tilesLocal } };
 }
 
 export function pointIndex(model, lat, lng) {
