@@ -31,6 +31,6 @@ self.onmessage = async ({ data: { id, type, ...options } }) => {
     if (options.initial) outlet = proposed.index;
     self.postMessage({ id, progress: 1, phase: 'calculating' });
     const result = await delineateCached(model, outlet);
-    self.postMessage({ id, value: { model: options.model ? null : model, result, point, proposed: options.initial ? null : proposed } });
+    self.postMessage({ id, value: { model: options.model ? null : model, result, point, proposed } });
   } catch (error) { self.postMessage({ id, error: error.message || 'Terrain analysis failed' }); }
 };
