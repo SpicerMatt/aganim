@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import 'fake-indexeddb/auto';
-import { buildModel, delineate, delineateCached, exportCollection, makeProfile, indexPoint, snapPoint, hydrologyWithinBounds } from '../src/hydrology.js';
+import { buildModel, calculateTerrainAxis, delineate, delineateCached, exportCollection, makeProfile, indexPoint, snapPoint, hydrologyWithinBounds } from '../src/hydrology.js';
 import { readCached, writeCached, clearCache, cacheStats, setCacheEnabled, MAX_CACHE_BYTES } from '../src/cache.js';
 import { createTranslator } from '../src/i18n.js';
 import { EMPTY_ANALYSES, createWatershedAnalysis, analysesReducer } from '../src/analyses.js';
@@ -163,6 +163,36 @@ test('profiles cross the chosen point and snapping does not change it', () => {
   const original = [...point];
   snapPoint(model, outlet);
   assert.deepEqual(point, original);
+});
+
+test('terrain axis returns an endpoint-to-endpoint route and elevation profile metrics', () => {
+  const start = indexPoint(model, 10 * width + 8);
+  const end = indexPoint(model, 10 * width + 23);
+  const axis = calculateTerrainAxis(model, start, end);
+  assert.deepEqual(axis.path[0], start);
+  assert.deepEqual(axis.path.at(-1), end);
+  assert.equal(axis.samples.length, 121);
+  assert.equal(axis.samples[0].point[0], start[0]);
+  assert.equal(axis.samples.at(-1).point[1], end[1]);
+  assert.ok(axis.length > 0);
+  assert.ok(axis.ascent >= 0);
+  assert.ok(axis.descent >= 0);
+  assert.equal(axis.totalVariation, axis.ascent + axis.descent);
+});
+
+test('terrain axis routes around a steep ridge to minimize elevation change', () => {
+  const width = 9;
+  const height = 7;
+  const elevations = new Float32Array(width * height);
+  for (let row = 1; row < height - 1; row++) elevations[row * width + 4] = 1;
+  const routeModel = { width, height, origin: [256, 256], resolution: 10, elevations };
+  const start = indexPoint(routeModel, 3 * width + 1);
+  const end = indexPoint(routeModel, 3 * width + 7);
+  const axis = calculateTerrainAxis(routeModel, start, end);
+  assert.equal(axis.ascent + axis.descent, 0);
+  assert.ok(axis.length > Math.hypot(end[0] - start[0], end[1] - start[1]) * 111320 * Math.cos(start[0] * Math.PI / 180));
+  assert.equal(axis.partial, true);
+  assert.ok(axis.path.every(point => point[0] !== undefined));
 });
 
 test('persistent cache preserves typed DEM models and watershed geometry', async () => {

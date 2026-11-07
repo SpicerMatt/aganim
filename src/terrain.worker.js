@@ -1,4 +1,4 @@
-import { loadModel, pointIndex, snapPoint, delineateCached, hydrologyWithinBounds } from './hydrology.js';
+import { calculateTerrainAxis, loadModel, pointIndex, project, snapPoint, delineateCached, hydrologyWithinBounds, ZOOM } from './hydrology.js';
 import { setCacheEnabled } from './cache.js';
 
 self.onmessage = async ({ data: { id, type, ...options } }) => {
@@ -22,6 +22,42 @@ self.onmessage = async ({ data: { id, type, ...options } }) => {
       if (index < 0) throw new Error('Selected point is outside terrain coverage');
       const proposed = snapPoint(model, index);
       self.postMessage({ id, value: { model: options.model ? null : model, point: options.point, proposed } });
+      return;
+    }
+    if (type === 'terrain-axis') {
+      const midpoint = [(options.start[0] + options.end[0]) / 2, (options.start[1] + options.end[1]) / 2];
+      const centerTile = project(...midpoint).map(pixel => Math.floor(pixel / 256));
+      const endpointTiles = [options.start, options.end].map(point => project(...point).map(pixel => Math.floor(pixel / 256)));
+      const radius = Math.max(...endpointTiles.flatMap(([x, y]) => [Math.abs(x - centerTile[0]), Math.abs(y - centerTile[1])]));
+      const requiredWindow = Math.max(3, radius * 2 + 1);
+      const firstWindow = Math.max(requiredWindow, options.model?.windowTiles || 3);
+      if (firstWindow > 7) throw new Error('The selected endpoints are farther apart than the available terrain window supports.');
+      const windowSizes = [3, 5, 7].filter(size => size >= firstWindow);
+      let model = null;
+      let axis = null;
+      let expansionWarning = null;
+      for (let attempt = 0; attempt < windowSizes.length; attempt++) {
+        const windowTiles = windowSizes[attempt];
+        let candidate = options.model?.windowTiles === windowTiles
+          && pointIndex(options.model, ...options.start) >= 0
+          && pointIndex(options.model, ...options.end) >= 0 ? options.model : null;
+        if (!candidate) {
+          try {
+            candidate = await loadModel(...midpoint, progress => self.postMessage({ id, progress: (attempt + progress) / windowSizes.length * 0.7, phase: 'loading' }), windowTiles);
+          } catch (error) {
+            if (!axis) throw error;
+            expansionWarning = 'Terrain coverage ended before the axis could be fully contained.';
+            break;
+          }
+        }
+        if (pointIndex(candidate, ...options.start) < 0 || pointIndex(candidate, ...options.end) < 0) throw new Error('One or both axis endpoints are outside the available elevation data.');
+        self.postMessage({ id, progress: 0.72 + attempt / windowSizes.length * 0.25, phase: 'calculating' });
+        axis = calculateTerrainAxis(candidate, options.start, options.end, progress => self.postMessage({ id, progress: 0.72 + attempt / windowSizes.length * 0.25 + progress * 0.2 / windowSizes.length, phase: 'calculating' }));
+        model = candidate;
+        if (!axis.partial) break;
+        if (attempt === windowSizes.length - 1) expansionWarning = 'The axis still reaches the edge of the largest available terrain window.';
+      }
+      self.postMessage({ id, value: { model: options.model && model === options.model ? null : model, axis, expansionWarning } });
       return;
     }
     if (options.initial) {

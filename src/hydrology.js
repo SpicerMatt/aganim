@@ -174,6 +174,106 @@ export function indexPoint(model, index) {
   return unproject(model.origin[0] + index % model.width + 0.5, model.origin[1] + Math.floor(index / model.width) + 0.5);
 }
 
+export function calculateTerrainAxis(model, startPoint, endPoint, onProgress = () => {}) {
+  const start = pointIndex(model, ...startPoint);
+  const end = pointIndex(model, ...endPoint);
+  if (start < 0 || end < 0) throw new RangeError('Axis endpoints must be inside the loaded terrain');
+
+  const size = model.width * model.height;
+  const distances = new Float64Array(size).fill(Infinity);
+  const previous = new Int32Array(size).fill(-1);
+  const settled = new Uint8Array(size);
+  const queue = new MinHeap();
+  const targetColumn = end % model.width;
+  const targetRow = Math.floor(end / model.width);
+  const distanceWeight = 1e-8;
+  const heuristic = index => Math.hypot(index % model.width - targetColumn, Math.floor(index / model.width) - targetRow) * model.resolution * distanceWeight;
+  distances[start] = 0;
+  queue.push([heuristic(start), start, 0]);
+  let visited = 0;
+
+  while (queue.items.length) {
+    const [, index, costAtInsert] = queue.pop();
+    if (settled[index] || costAtInsert !== distances[index]) continue;
+    if (index === end) break;
+    settled[index] = 1;
+    visited++;
+    const column = index % model.width;
+    const row = Math.floor(index / model.width);
+    for (const [dx, dy] of OFFSETS) {
+      const nextX = column + dx;
+      const nextY = row + dy;
+      if (nextX < 0 || nextY < 0 || nextX >= model.width || nextY >= model.height) continue;
+      const next = nextY * model.width + nextX;
+      if (settled[next]) continue;
+      const horizontal = Math.hypot(dx, dy) * model.resolution;
+      const elevationChange = Math.abs(model.elevations[next] - model.elevations[index]);
+      const nextCost = costAtInsert + elevationChange + horizontal * distanceWeight;
+      if (nextCost >= distances[next]) continue;
+      distances[next] = nextCost;
+      previous[next] = index;
+      queue.push([nextCost + heuristic(next), next, nextCost]);
+    }
+    if ((visited & 8191) === 0) onProgress(visited / size);
+  }
+  if (start !== end && previous[end] < 0) throw new Error('No terrain route connects the selected endpoints');
+
+  const indices = [];
+  for (let index = end; index !== -1; index = previous[index]) {
+    indices.push(index);
+    if (index === start) break;
+  }
+  if (indices.at(-1) !== start) throw new Error('Could not reconstruct the terrain route');
+  indices.reverse();
+
+  const path = indices.map(index => indexPoint(model, index));
+  const cumulative = new Float64Array(indices.length);
+  let ascent = 0;
+  let descent = 0;
+  let minimum = Infinity;
+  let maximum = -Infinity;
+  let partial = false;
+  for (let index = 0; index < indices.length; index++) {
+    const cell = indices[index];
+    const column = cell % model.width;
+    const row = Math.floor(cell / model.width);
+    const elevation = model.elevations[cell];
+    minimum = Math.min(minimum, elevation);
+    maximum = Math.max(maximum, elevation);
+    if (column === 0 || row === 0 || column === model.width - 1 || row === model.height - 1) partial = true;
+    if (index === 0) continue;
+    const previousCell = indices[index - 1];
+    const previousElevation = model.elevations[previousCell];
+    const change = elevation - previousElevation;
+    if (change > 0) ascent += change;
+    else descent -= change;
+    const distance = Math.hypot(column - previousCell % model.width, row - Math.floor(previousCell / model.width)) * model.resolution;
+    cumulative[index] = cumulative[index - 1] + distance;
+  }
+
+  const length = cumulative.at(-1) || 0;
+  let segment = 0;
+  const samples = Array.from({ length: 121 }, (_, sampleIndex) => {
+    const distance = length * sampleIndex / 120;
+    while (segment < cumulative.length - 2 && cumulative[segment + 1] < distance) segment++;
+    const span = cumulative[segment + 1] - cumulative[segment];
+    const fraction = span > 0 ? (distance - cumulative[segment]) / span : 0;
+    const first = indices[segment];
+    const second = indices[Math.min(segment + 1, indices.length - 1)];
+    const firstPoint = indexPoint(model, first);
+    const secondPoint = indexPoint(model, second);
+    return {
+      distance,
+      elevation: model.elevations[first] + (model.elevations[second] - model.elevations[first]) * fraction,
+      point: [firstPoint[0] + (secondPoint[0] - firstPoint[0]) * fraction, firstPoint[1] + (secondPoint[1] - firstPoint[1]) * fraction],
+    };
+  });
+  const north = (path.at(-1)[0] - path[0][0]) * 111320;
+  const east = (path.at(-1)[1] - path[0][1]) * 111320 * Math.cos(path[0][0] * Math.PI / 180);
+  const bearing = (Math.atan2(east, north) * 180 / Math.PI + 360) % 360;
+  return { path, samples, length, ascent, descent, minimum, maximum, totalVariation: ascent + descent, bearing, partial, visited };
+}
+
 function networkWithinBounds(model, bounds, threshold, kind) {
   const [first, second] = bounds;
   const south = Math.min(first[0], second[0]);
