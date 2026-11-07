@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import 'fake-indexeddb/auto';
-import { buildModel, calculateTerrainAxis, delineate, delineateCached, exportCollection, makeProfile, indexPoint, snapPoint, hydrologyWithinBounds } from '../src/hydrology.js';
+import { buildModel, calculateTerrainAxis, calculateTerrainAxisThroughPoints, routeViewshed, delineate, delineateCached, exportCollection, makeProfile, indexPoint, snapPoint, hydrologyWithinBounds } from '../src/hydrology.js';
 import { readCached, writeCached, clearCache, cacheStats, setCacheEnabled, MAX_CACHE_BYTES } from '../src/cache.js';
 import { createTranslator } from '../src/i18n.js';
 import { EMPTY_ANALYSES, createWatershedAnalysis, analysesReducer } from '../src/analyses.js';
@@ -193,6 +193,34 @@ test('terrain axis routes around a steep ridge to minimize elevation change', ()
   assert.ok(axis.length > Math.hypot(end[0] - start[0], end[1] - start[1]) * 111320 * Math.cos(start[0] * Math.PI / 180));
   assert.equal(axis.partial, true);
   assert.ok(axis.path.every(point => point[0] !== undefined));
+});
+
+test('multi-waypoint terrain axis passes through each waypoint and combines metrics', () => {
+  const waypoints = [10 * width + 8, 10 * width + 16, 10 * width + 23].map(index => indexPoint(model, index));
+  const axis = calculateTerrainAxisThroughPoints(model, waypoints);
+  for (const waypoint of waypoints) assert.ok(axis.path.some(point => Math.hypot(point[0] - waypoint[0], point[1] - waypoint[1]) < 0.00002));
+  assert.equal(axis.samples.length, 121);
+  assert.ok(axis.length > 0);
+  assert.equal(axis.totalVariation, axis.ascent + axis.descent);
+});
+
+test('route viewshed marks flat terrain visible and blocks cells behind a ridge', () => {
+  const target = indexPoint(model, 16 * width + 20);
+  const routeSamples = [{ point: target, elevation: model.elevations[16 * width + 20] }];
+  const visibleCell = 16 * width + 14;
+  const flat = routeViewshed(model, routeSamples, 250);
+  assert.equal(flat.mask[visibleCell], 1);
+  assert.equal(flat.partial, false);
+
+  const elevations = new Float32Array(terrain);
+  for (let row = 10; row <= 22; row++) elevations[row * width + 16] = 1000;
+  const ridgeModel = { ...model, elevations };
+  const blocked = routeViewshed(ridgeModel, routeSamples, 250);
+  assert.equal(blocked.mask[visibleCell], 0);
+  assert.ok(blocked.visibleCells < flat.visibleCells);
+
+  const edgeSample = { point: indexPoint(model, 16 * width + 2), elevation: model.elevations[16 * width + 2] };
+  assert.equal(routeViewshed(model, [edgeSample], 250).partial, true);
 });
 
 test('persistent cache preserves typed DEM models and watershed geometry', async () => {

@@ -178,6 +178,7 @@ export function calculateTerrainAxis(model, startPoint, endPoint, onProgress = (
   const start = pointIndex(model, ...startPoint);
   const end = pointIndex(model, ...endPoint);
   if (start < 0 || end < 0) throw new RangeError('Axis endpoints must be inside the loaded terrain');
+  if (start === end) throw new RangeError('Axis endpoints must be different');
 
   const size = model.width * model.height;
   const distances = new Float64Array(size).fill(Infinity);
@@ -272,6 +273,141 @@ export function calculateTerrainAxis(model, startPoint, endPoint, onProgress = (
   const east = (path.at(-1)[1] - path[0][1]) * 111320 * Math.cos(path[0][0] * Math.PI / 180);
   const bearing = (Math.atan2(east, north) * 180 / Math.PI + 360) % 360;
   return { path, samples, length, ascent, descent, minimum, maximum, totalVariation: ascent + descent, bearing, partial, visited };
+}
+
+export function calculateTerrainAxisThroughPoints(model, waypoints, onProgress = () => {}) {
+  if (waypoints.length < 2) throw new RangeError('A movement axis needs at least two waypoints');
+  const segments = [];
+  for (let index = 0; index < waypoints.length - 1; index++) {
+    segments.push(calculateTerrainAxis(model, waypoints[index], waypoints[index + 1], progress => onProgress((index + progress) / (waypoints.length - 1))));
+    onProgress((index + 1) / (waypoints.length - 1));
+  }
+
+  const path = [];
+  const rawSamples = [];
+  let length = 0;
+  let ascent = 0;
+  let descent = 0;
+  let minimum = Infinity;
+  let maximum = -Infinity;
+  let visited = 0;
+  for (const [segmentIndex, segment] of segments.entries()) {
+    path.push(...segment.path.slice(segmentIndex ? 1 : 0));
+    rawSamples.push(...segment.samples.slice(segmentIndex ? 1 : 0).map(sample => ({ ...sample, distance: sample.distance + length })));
+    length += segment.length;
+    ascent += segment.ascent;
+    descent += segment.descent;
+    minimum = Math.min(minimum, segment.minimum);
+    maximum = Math.max(maximum, segment.maximum);
+    visited += segment.visited;
+  }
+
+  let sampleIndex = 0;
+  const samples = Array.from({ length: 121 }, (_, index) => {
+    const distance = length * index / 120;
+    while (sampleIndex < rawSamples.length - 2 && rawSamples[sampleIndex + 1].distance < distance) sampleIndex++;
+    const first = rawSamples[sampleIndex];
+    const second = rawSamples[Math.min(sampleIndex + 1, rawSamples.length - 1)];
+    const fraction = second.distance > first.distance ? (distance - first.distance) / (second.distance - first.distance) : 0;
+    return {
+      distance,
+      elevation: first.elevation + (second.elevation - first.elevation) * fraction,
+      point: [first.point[0] + (second.point[0] - first.point[0]) * fraction, first.point[1] + (second.point[1] - first.point[1]) * fraction],
+    };
+  });
+  const north = (path.at(-1)[0] - path[0][0]) * 111320;
+  const east = (path.at(-1)[1] - path[0][1]) * 111320 * Math.cos(path[0][0] * Math.PI / 180);
+  const bearing = (Math.atan2(east, north) * 180 / Math.PI + 360) % 360;
+  return { path, samples, length, ascent, descent, minimum, maximum, totalVariation: ascent + descent, bearing, partial: segments.some(segment => segment.partial), visited };
+}
+
+export function routeViewshed(model, routeSamples, radiusMeters, onProgress = () => {}, observerHeight = 1.7, targetHeight = 1.5) {
+  if (!Number.isFinite(radiusMeters) || radiusMeters <= 0) throw new RangeError('Viewshed radius must be positive');
+  const targets = [];
+  const sampleStride = Math.max(1, Math.ceil(routeSamples.length / 61));
+  for (let index = 0; index < routeSamples.length; index += sampleStride) {
+    const sample = routeSamples[index];
+    const cell = pointIndex(model, ...sample.point);
+    if (cell >= 0) targets.push({ cell, column: cell % model.width, row: Math.floor(cell / model.width) });
+  }
+  const lastSample = routeSamples.at(-1);
+  const lastCell = lastSample && pointIndex(model, ...lastSample.point);
+  if (lastCell >= 0 && targets.at(-1)?.cell !== lastCell) targets.push({ cell: lastCell, column: lastCell % model.width, row: Math.floor(lastCell / model.width) });
+  if (!targets.length) throw new RangeError('The route has no samples inside terrain coverage');
+
+  const radiusCells = Math.ceil(radiusMeters / model.resolution);
+  const rawMinColumn = Math.min(...targets.map(target => target.column)) - radiusCells;
+  const rawMaxColumn = Math.max(...targets.map(target => target.column)) + radiusCells;
+  const rawMinRow = Math.min(...targets.map(target => target.row)) - radiusCells;
+  const rawMaxRow = Math.max(...targets.map(target => target.row)) + radiusCells;
+  const minColumn = Math.max(0, rawMinColumn);
+  const maxColumn = Math.min(model.width - 1, rawMaxColumn);
+  const minRow = Math.max(0, rawMinRow);
+  const maxRow = Math.min(model.height - 1, rawMaxRow);
+  const radiusSquared = radiusCells ** 2;
+  const targetBins = new Map();
+  for (const target of targets) {
+    const key = `${Math.floor(target.column / radiusCells)}:${Math.floor(target.row / radiusCells)}`;
+    const bin = targetBins.get(key) || [];
+    bin.push(target);
+    targetBins.set(key, bin);
+  }
+  const mask = new Uint8Array(model.width * model.height);
+  let visibleCells = 0;
+  let candidateCells = 0;
+  const rowCount = maxRow - minRow + 1;
+
+  for (let row = minRow; row <= maxRow; row++) {
+    if ((row & 15) === 0) onProgress((row - minRow) / rowCount);
+    for (let column = minColumn; column <= maxColumn; column++) {
+      const binColumn = Math.floor(column / radiusCells);
+      const binRow = Math.floor(row / radiusCells);
+      const nearbyTargets = [];
+      for (let targetBinRow = binRow - 1; targetBinRow <= binRow + 1; targetBinRow++) {
+        for (let targetBinColumn = binColumn - 1; targetBinColumn <= binColumn + 1; targetBinColumn++) {
+          const bin = targetBins.get(`${targetBinColumn}:${targetBinRow}`);
+          if (!bin) continue;
+          for (const target of bin) {
+            const distance = (column - target.column) ** 2 + (row - target.row) ** 2;
+            if (distance <= radiusSquared) nearbyTargets.push({ target, distance });
+          }
+        }
+      }
+      if (!nearbyTargets.length) continue;
+      nearbyTargets.sort((first, second) => first.distance - second.distance);
+      candidateCells++;
+      const sourceIndex = row * model.width + column;
+      const sourceElevation = model.elevations[sourceIndex] + observerHeight;
+      let visible = false;
+      for (const { target } of nearbyTargets) {
+        const dx = target.column - column;
+        const dy = target.row - row;
+        const steps = Math.max(Math.abs(dx), Math.abs(dy));
+        const destinationElevation = model.elevations[target.cell] + targetHeight;
+        let blocked = false;
+        for (let step = 1; step < steps; step++) {
+          const x = Math.round(column + dx * step / steps);
+          const y = Math.round(row + dy * step / steps);
+          const terrainIndex = y * model.width + x;
+          const sightElevation = sourceElevation + (destinationElevation - sourceElevation) * step / steps;
+          if (model.elevations[terrainIndex] > sightElevation + 0.5) { blocked = true; break; }
+        }
+        if (!blocked) { visible = true; break; }
+      }
+      if (visible) { mask[sourceIndex] = 1; visibleCells++; }
+    }
+  }
+  onProgress(1);
+  return {
+    mask,
+    width: model.width,
+    height: model.height,
+    origin: model.origin,
+    visibleCells,
+    candidateCells,
+    radiusMeters,
+    partial: rawMinColumn < 0 || rawMaxColumn >= model.width || rawMinRow < 0 || rawMaxRow >= model.height,
+  };
 }
 
 function networkWithinBounds(model, bounds, threshold, kind) {

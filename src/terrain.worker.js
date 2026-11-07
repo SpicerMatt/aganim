@@ -1,4 +1,4 @@
-import { calculateTerrainAxis, loadModel, pointIndex, project, snapPoint, delineateCached, hydrologyWithinBounds, ZOOM } from './hydrology.js';
+import { calculateTerrainAxisThroughPoints, loadModel, pointIndex, project, routeViewshed, snapPoint, delineateCached, hydrologyWithinBounds, ZOOM } from './hydrology.js';
 import { setCacheEnabled } from './cache.js';
 
 self.onmessage = async ({ data: { id, type, ...options } }) => {
@@ -25,13 +25,15 @@ self.onmessage = async ({ data: { id, type, ...options } }) => {
       return;
     }
     if (type === 'terrain-axis') {
-      const midpoint = [(options.start[0] + options.end[0]) / 2, (options.start[1] + options.end[1]) / 2];
-      const centerTile = project(...midpoint).map(pixel => Math.floor(pixel / 256));
-      const endpointTiles = [options.start, options.end].map(point => project(...point).map(pixel => Math.floor(pixel / 256)));
-      const radius = Math.max(...endpointTiles.flatMap(([x, y]) => [Math.abs(x - centerTile[0]), Math.abs(y - centerTile[1])]));
+      const waypoints = options.waypoints;
+      if (!Array.isArray(waypoints) || waypoints.length < 2) throw new Error('A movement axis needs at least two points.');
+      const midpoint = [waypoints.reduce((sum, point) => sum + point[0], 0) / waypoints.length, waypoints.reduce((sum, point) => sum + point[1], 0) / waypoints.length];
+      const centerTile = project(...midpoint, ZOOM).map(pixel => Math.floor(pixel / 256));
+      const waypointTiles = waypoints.map(point => project(...point, ZOOM).map(pixel => Math.floor(pixel / 256)));
+      const radius = Math.max(...waypointTiles.flatMap(([x, y]) => [Math.abs(x - centerTile[0]), Math.abs(y - centerTile[1])]));
       const requiredWindow = Math.max(3, radius * 2 + 1);
       const firstWindow = Math.max(requiredWindow, options.model?.windowTiles || 3);
-      if (firstWindow > 7) throw new Error('The selected endpoints are farther apart than the available terrain window supports.');
+      if (firstWindow > 7) throw new Error('The selected waypoints are farther apart than the available terrain window supports.');
       const windowSizes = [3, 5, 7].filter(size => size >= firstWindow);
       let model = null;
       let axis = null;
@@ -39,8 +41,7 @@ self.onmessage = async ({ data: { id, type, ...options } }) => {
       for (let attempt = 0; attempt < windowSizes.length; attempt++) {
         const windowTiles = windowSizes[attempt];
         let candidate = options.model?.windowTiles === windowTiles
-          && pointIndex(options.model, ...options.start) >= 0
-          && pointIndex(options.model, ...options.end) >= 0 ? options.model : null;
+          && waypoints.every(point => pointIndex(options.model, ...point) >= 0) ? options.model : null;
         if (!candidate) {
           try {
             candidate = await loadModel(...midpoint, progress => self.postMessage({ id, progress: (attempt + progress) / windowSizes.length * 0.7, phase: 'loading' }), windowTiles);
@@ -50,14 +51,19 @@ self.onmessage = async ({ data: { id, type, ...options } }) => {
             break;
           }
         }
-        if (pointIndex(candidate, ...options.start) < 0 || pointIndex(candidate, ...options.end) < 0) throw new Error('One or both axis endpoints are outside the available elevation data.');
+        if (!waypoints.every(point => pointIndex(candidate, ...point) >= 0)) throw new Error('One or more axis points are outside the available elevation data.');
         self.postMessage({ id, progress: 0.72 + attempt / windowSizes.length * 0.25, phase: 'calculating' });
-        axis = calculateTerrainAxis(candidate, options.start, options.end, progress => self.postMessage({ id, progress: 0.72 + attempt / windowSizes.length * 0.25 + progress * 0.2 / windowSizes.length, phase: 'calculating' }));
+        axis = calculateTerrainAxisThroughPoints(candidate, waypoints, progress => self.postMessage({ id, progress: 0.72 + attempt / windowSizes.length * 0.25 + progress * 0.2 / windowSizes.length, phase: 'calculating' }));
         model = candidate;
         if (!axis.partial) break;
         if (attempt === windowSizes.length - 1) expansionWarning = 'The axis still reaches the edge of the largest available terrain window.';
       }
       self.postMessage({ id, value: { model: options.model && model === options.model ? null : model, axis, expansionWarning } });
+      return;
+    }
+    if (type === 'axis-viewshed') {
+      const viewshed = routeViewshed(options.model, options.routeSamples, options.radius, progress => self.postMessage({ id, progress, phase: 'calculating' }));
+      self.postMessage({ id, value: { viewshed } });
       return;
     }
     if (options.initial) {

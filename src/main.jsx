@@ -2,7 +2,7 @@ import React, { useEffect, useReducer, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import L from 'leaflet';
 import { contours } from 'd3-contour';
-import { Search, ArrowUpRight, MapPin, Layers, Mountain, Crosshair, Plus, Minus, Maximize, Scan, Route, Download, X, Check, Info, SlidersHorizontal, LoaderCircle, MoveUpRight, Globe2, LocateFixed, CircleHelp, PanelLeftClose, PanelLeftOpen, ChevronDown, ChevronUp, CheckCircle2, AlertTriangle, HardDrive, Trash2, Languages, FolderOpen, Eye, EyeOff } from 'lucide-react';
+import { Search, ArrowUpRight, MapPin, Layers, Mountain, Crosshair, Plus, Minus, Maximize, Scan, Route, Download, X, Check, Info, SlidersHorizontal, LoaderCircle, MoveUpRight, Globe2, LocateFixed, CircleHelp, PanelLeftClose, PanelLeftOpen, ChevronDown, ChevronUp, CheckCircle2, AlertTriangle, HardDrive, Trash2, Languages, FolderOpen, Eye, EyeOff, Undo2 } from 'lucide-react';
 import { pointIndex, makeProfile, exportCollection, unproject, SOURCE } from './hydrology.js';
 import { cacheEnabled, setCacheEnabled, cacheStats, clearCache, MAX_CACHE_BYTES } from './cache.js';
 import { terrainTask } from './terrain-client.js';
@@ -56,7 +56,7 @@ function terrainContours(model) {
   }))) } })) };
 }
 
-function TerrainMap({ mapRef, model, selected, deletePromptId, onDeleteAnalysis, onDismissDelete, hasAnalysis, selectedAnalysisVisible, results, activeId, pendingSnap, layers, profiles, hoverPoint, mode, onSelect, onDraw, onOutletClick, onAnalysisNumberClick, aoi, areaHydrology, axisStart, axisRoute, language }) {
+function TerrainMap({ mapRef, model, selected, deletePromptId, onDeleteAnalysis, onDismissDelete, hasAnalysis, selectedAnalysisVisible, results, activeId, pendingSnap, layers, profiles, hoverPoint, mode, onSelect, onDraw, onOutletClick, onAnalysisNumberClick, aoi, areaHydrology, axisWaypoints, axisRoute, axisViewshed, language }) {
   const t = createTranslator(language);
   const element = useRef(null);
   const [deletePosition, setDeletePosition] = useState(null);
@@ -108,6 +108,34 @@ function TerrainMap({ mapRef, model, selected, deletePromptId, onDeleteAnalysis,
     return () => layer.remove();
   }, [model, layers.contours]);
   useEffect(() => {
+    if (!model || !axisViewshed?.mask?.some(Boolean)) return;
+    const canvas = document.createElement('canvas');
+    canvas.width = axisViewshed.width;
+    canvas.height = axisViewshed.height;
+    const context = canvas.getContext('2d');
+    const image = context.createImageData(canvas.width, canvas.height);
+    for (let index = 0; index < axisViewshed.mask.length; index++) {
+      if (!axisViewshed.mask[index]) continue;
+      const offset = index * 4;
+      image.data[offset] = 224;
+      image.data[offset + 1] = 82;
+      image.data[offset + 2] = 70;
+      image.data[offset + 3] = 78;
+    }
+    context.putImageData(image, 0, 0);
+    const [north, west] = unproject(axisViewshed.origin[0], axisViewshed.origin[1]);
+    const [south, east] = unproject(axisViewshed.origin[0] + axisViewshed.width, axisViewshed.origin[1] + axisViewshed.height);
+    let overlay = null;
+    let objectUrl = null;
+    let disposed = false;
+    canvas.toBlob(blob => {
+      if (disposed || !blob) return;
+      objectUrl = URL.createObjectURL(blob);
+      overlay = L.imageOverlay(objectUrl, [[south, west], [north, east]], { opacity: 1, interactive: false, pane: 'overlayPane' }).addTo(mapRef.current);
+    }, 'image/png');
+    return () => { disposed = true; overlay?.remove(); if (objectUrl) URL.revokeObjectURL(objectUrl); };
+  }, [axisViewshed, model]);
+  useEffect(() => {
     const group = L.layerGroup().addTo(mapRef.current);
     results.filter(result => result.visible !== false).forEach((result, index) => {
       const color = WATERSHED_COLOR;
@@ -140,7 +168,7 @@ function TerrainMap({ mapRef, model, selected, deletePromptId, onDeleteAnalysis,
       L.marker(pendingSnap.point, { icon: L.divIcon({ className: 'proposed-outlet-marker', html: '<span></span>', iconSize: [24, 24], iconAnchor: [12, 12] }), zIndexOffset: 700 }).bindTooltip(t('Proposed channel outlet'), { permanent: true, direction: 'top' }).on('click', event => { L.DomEvent.stopPropagation(event); handlers.current.onOutletClick(pendingSnap.point); }).addTo(group);
       L.polyline([selected, pendingSnap.point], { color: '#bc7f39', dashArray: '4 5', weight: 2 }).addTo(group);
     }
-    if (axisStart) L.circleMarker(axisStart, { radius: 6, color: '#fff', weight: 2, fillColor: '#378365', fillOpacity: 1 }).bindTooltip(t('Axis start')).addTo(group);
+    axisWaypoints.forEach((point, index) => L.circleMarker(point, { radius: 6, color: '#fff', weight: 2, fillColor: '#378365', fillOpacity: 1 }).bindTooltip(String(index + 1), { permanent: true, direction: 'top', offset: [0, -5] }).addTo(group));
     if (axisRoute?.path?.length > 1) {
       L.polyline(axisRoute.path, { color: '#fff', weight: 7, opacity: 0.9, interactive: false }).addTo(group);
       L.polyline(axisRoute.path, { color: '#d58a32', weight: 3.5, opacity: 1, interactive: false }).addTo(group);
@@ -153,7 +181,7 @@ function TerrainMap({ mapRef, model, selected, deletePromptId, onDeleteAnalysis,
     if (aoi) L.rectangle(aoi, { color: '#6f7794', weight: 2, dashArray: '5 5', fillOpacity: 0.04 }).addTo(group);
     groups.current.markers = group;
     return () => group.remove();
-  }, [selected, selectedAnalysisVisible, hasAnalysis, pendingSnap, profiles, aoi, axisStart, axisRoute, language]);
+  }, [selected, selectedAnalysisVisible, hasAnalysis, pendingSnap, profiles, aoi, axisWaypoints, axisRoute, language]);
   useEffect(() => {
     const map = mapRef.current;
     const analysis = results.find(item => item.id === deletePromptId);
@@ -243,8 +271,10 @@ function App() {
   const [mode, setMode] = useState('point');
   const [aoi, setAoi] = useState(null);
   const [areaHydrology, setAreaHydrology] = useState(null);
-  const [axisStart, setAxisStart] = useState(null);
+  const [axisWaypoints, setAxisWaypoints] = useState([]);
   const [axisRoute, setAxisRoute] = useState(null);
+  const [axisViewshed, setAxisViewshed] = useState(null);
+  const [viewshedRadius, setViewshedRadius] = useState(1000);
   const [firstCorner, setFirstCorner] = useState(null);
   const [query, setQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
@@ -331,7 +361,7 @@ function App() {
   }, [notice]);
 
   function selectPoint(point, name = 'Selected terrain point') {
-    setSelected(point); setPointName(name); setPendingSnap(null); setAxisStart(null); setAxisRoute(null); setError('');
+    setSelected(point); setPointName(name); setPendingSnap(null); setAxisWaypoints([]); setAxisRoute(null); setAxisViewshed(null); setError('');
     setDeletePromptId(null);
     dispatchAnalysis({ type: 'activate', id: null });
     setSearchOpen(false);
@@ -394,22 +424,22 @@ function App() {
       setNotice('Could not load hydrology for this area. Try a smaller area or check the connection.');
     }
   }
-  async function analyzeAxis(start, end) {
+  async function analyzeAxis(waypoints) {
     const request = ++requestId.current;
-    const midpoint = [(start[0] + end[0]) / 2, (start[1] + end[1]) / 2];
-    const reuse = model && [start, end].every(point => pointIndex(model, ...point) >= 0) ? model : null;
-    setAxisRoute(null); setSelected(null); setPointName(''); setPendingSnap(null);
+    const midpoint = [waypoints.reduce((sum, point) => sum + point[0], 0) / waypoints.length, waypoints.reduce((sum, point) => sum + point[1], 0) / waypoints.length];
+    const reuse = model && waypoints.every(point => pointIndex(model, ...point) >= 0) ? model : null;
+    setAxisRoute(null); setAxisViewshed(null); setSelected(null); setPointName(''); setPendingSnap(null);
     setLoading(true); setProgress(0); setAnalysisPhase(reuse ? 'calculating' : 'loading'); setError('');
     setNotice('Calculating movement axis with the least elevation change…');
     try {
-      const { axis, model: responseModel, expansionWarning } = await terrainTask('terrain-axis', { start, end, point: midpoint, model: reuse, cacheEnabled: localCache }, (value, phase) => {
+      const { axis, model: responseModel, expansionWarning } = await terrainTask('terrain-axis', { waypoints, point: midpoint, model: reuse, cacheEnabled: localCache }, (value, phase) => {
         if (request === requestId.current) { setProgress(value); setAnalysisPhase(phase); }
       });
       if (request !== requestId.current) return;
       const data = responseModel || reuse;
       setModel(data);
       setAxisRoute(axis);
-      setAxisStart(null);
+      setAxisViewshed(null);
       setProfiles([{ ...axis, kind: 'axis' }]);
       setProfilesOpen(true);
       setLoading(false);
@@ -421,13 +451,32 @@ function App() {
     } catch (failure) {
       if (request !== requestId.current) return;
       setLoading(false); setError('The movement axis could not be calculated between these points. Try points closer together or check elevation coverage.');
-      setAxisStart(null);
+      setAxisWaypoints([...waypoints]);
+    }
+  }
+  async function calculateAxisViewshed() {
+    if (!model || !axisRoute || loading) return;
+    const request = ++requestId.current;
+    setLoading(true); setProgress(0); setAnalysisPhase('calculating'); setError('');
+    try {
+      const { viewshed } = await terrainTask('axis-viewshed', { model, routeSamples: axisRoute.samples, radius: viewshedRadius, cacheEnabled: localCache }, value => {
+        if (request === requestId.current) { setProgress(value); setAnalysisPhase('calculating'); }
+      });
+      if (request !== requestId.current) return;
+      setAxisViewshed(viewshed); setLoading(false); setCacheInfo(await cacheStats());
+      setNotice(viewshed.partial ? 'The visibility area reaches beyond the loaded elevation coverage.' : 'Visibility area calculated for the selected radius.');
+    } catch (failure) {
+      if (request !== requestId.current) return;
+      setLoading(false); setError('Could not calculate the axis visibility area. Try a smaller radius.');
     }
   }
   function handleDraw(point) {
     if (mode === 'axis') {
-      if (!axisStart) { setAxisStart(point); setAxisRoute(null); setNotice('Axis start point selected. Choose the endpoint.'); }
-      else { const start = axisStart; setAxisStart(null); analyzeAxis(start, point); }
+      setAxisRoute(null);
+      setAxisViewshed(null);
+      setProfiles([]); setProfilesOpen(false);
+      setAxisWaypoints(previous => [...previous, point]);
+      setNotice('Axis point added. Add another point or calculate the axis.');
     } else if (mode === 'area') {
       if (!firstCorner) { setFirstCorner(point); setNotice('Area of interest: select the opposite corner.'); }
       else { const bounds = [firstCorner, point]; setFirstCorner(null); setMode('point'); mapRef.current.fitBounds(bounds, { padding: [40, 40] }); analyzeArea(bounds); }
@@ -440,6 +489,16 @@ function App() {
       setProfiles(previous => [...previous.slice(-1), makeProfile(model, selected, bearing, length)]);
       setProfilesOpen(true); setMode('point');
     }
+  }
+  function finishAxis() {
+    if (axisWaypoints.length < 2 || loading) return;
+    analyzeAxis(axisWaypoints);
+  }
+  function undoAxisWaypoint() {
+    setAxisWaypoints(previous => previous.slice(0, -1));
+    setAxisRoute(null);
+    setAxisViewshed(null);
+    setProfiles([]); setProfilesOpen(false);
   }
   function choosePlace(place) {
     if (mode === 'axis') handleDraw(place.point);
@@ -481,7 +540,7 @@ function App() {
     requestId.current++;
     setSelected(null); setPointName(''); setModel(null); setLoading(false);
     setPendingSnap(null); setProfiles([]); setProfilesOpen(false); setHoverPoint(null);
-    setAxisStart(null); setAxisRoute(null);
+    setAxisWaypoints([]); setAxisRoute(null); setAxisViewshed(null);
     setError(''); setNotice(''); setProgress(0); setMode('point'); setFirstCorner(null);
     mapRef.current?.fitBounds(REGION_BOUNDS, { padding: [28, 28], maxZoom: 7 });
   }
@@ -489,7 +548,7 @@ function App() {
     requestId.current++;
     setDeletePromptId(null);
     dispatchAnalysis({ type: 'activate', id: analysis.id });
-    setAxisStart(null); setAxisRoute(null);
+    setAxisWaypoints([]); setAxisRoute(null); setAxisViewshed(null);
     setModel(analysis.model); setSelected(analysis.point); setPointName(analysis.location || analysis.name);
     setLoading(false); setError(''); setPendingSnap(null); setProfiles([]); setProfilesOpen(false); setHoverPoint(null); setMode('point'); setFirstCorner(null);
     zoomResult(analysis);
@@ -517,7 +576,7 @@ function App() {
     dispatchAnalysis({ type: 'restore', items: restored, activeId: null });
     analysisSequence.current = restored.reduce((maximum, analysis) => Math.max(maximum, analysis.number), 0);
     setSelected(null); setPointName(''); setModel(null); setLoading(false); setError(''); setPendingSnap(null);
-    setProfiles([]); setProfilesOpen(false); setHoverPoint(null); setAxisStart(null); setAxisRoute(null); setAnalysesOnly(false);
+    setProfiles([]); setProfilesOpen(false); setHoverPoint(null); setAxisWaypoints([]); setAxisRoute(null); setAxisViewshed(null); setAnalysesOnly(false);
     setModal(null); setSidebarOpen(true); setMobilePanelOpen(true);
     if (restored.length) mapRef.current.fitBounds(L.featureGroup(restored.map(analysis => L.geoJSON(analysis.boundary))).getBounds(), { padding: [65, 75], maxZoom: 14 });
   }
@@ -571,8 +630,9 @@ function App() {
         <div className="sidebar-scroll" id="mobile-analysis-content">
           <section className="analyses-section" ref={analysisListRef}><div className="section-title"><h3><Layers size={16}/>{t('Map analyses')} <span className="analysis-count">{results.length}</span></h3><div className="analysis-heading-actions"><IconButton icon={FolderOpen} label={t('Saved collections')} onClick={openCollections}/><IconButton icon={Scan} label={t('Fit all analyses')} disabled={!results.some(analysis => analysis.visible !== false)} onClick={zoomAllAnalyses}/><IconButton icon={analysesOnly ? ChevronDown : ChevronUp} label={t(analysesOnly ? 'Show full panel' : 'Show basins only')} disabled={!results.length} active={analysesOnly} onClick={() => setAnalysesOnly(!analysesOnly)}/></div></div>{results.length ? <ol className="analysis-list">{results.map(analysis => <li key={analysis.id} data-analysis-id={analysis.id} className={`${analysis.id === activeId ? 'active ' : ''}${analysis.visible === false ? 'analysis-hidden' : ''}`}><button className="analysis-select" aria-pressed={analysis.id === activeId} onClick={() => activateAnalysis(analysis)}><span className="analysis-number">{analysis.number}</span><span><strong>{analysis.name || t('Watershed')}</strong><small>{t(analysis.location || 'Selected terrain point')} · {formatArea(analysis.area)} {t('km²')}</small></span></button><input className="analysis-name-input" aria-label={t('Name watershed {number}', { number: analysis.number })} value={analysis.name} maxLength={60} placeholder={t('Name this watershed')} onFocus={() => dispatchAnalysis({ type: 'activate', id: analysis.id })} onChange={event => dispatchAnalysis({ type: 'rename', id: analysis.id, name: event.target.value })}/><IconButton className="analysis-visibility-button" icon={analysis.visible === false ? Eye : EyeOff} label={t(analysis.visible === false ? 'Show analysis {number}' : 'Hide analysis {number}', { number: analysis.number })} aria-pressed={analysis.visible !== false} onClick={() => dispatchAnalysis({ type: 'visibility', id: analysis.id, visible: analysis.visible === false })}/><IconButton className="analysis-delete-button" icon={X} label={t('Remove analysis {number}', { number: analysis.number })} onClick={() => removeAnalysis(analysis.id)}/></li>)}</ol> : <p className="analysis-empty">{t('No analyses on the map yet.')}</p>}</section>
           <section className="layers-section"><div className="section-title"><h3><Layers size={16}/>{t('Map layers')}</h3><SlidersHorizontal size={15}/></div><div className="map-style-selector" role="group" aria-label={t('Base map')}><button type="button" className={!layers.satellite ? 'active' : ''} aria-pressed={!layers.satellite} onClick={() => setLayers(previous => ({ ...previous, satellite: false }))}><Mountain size={15}/>{t('Topographic')}</button><button type="button" className={layers.satellite ? 'active' : ''} aria-pressed={layers.satellite} onClick={() => setLayers(previous => ({ ...previous, satellite: true }))}><Globe2 size={15}/>{t('Satellite')}</button></div><Toggle label={t('Drainage network')} icon={Route} checked={layers.drainage} onChange={value => setLayers(previous => ({ ...previous, drainage: value }))}/><Toggle label={t('Contour lines')} icon={Mountain} checked={layers.contours} onChange={value => setLayers(previous => ({ ...previous, contours: value }))}/><Toggle label={t('Hillshade')} icon={Layers} checked={layers.hillshade} onChange={value => setLayers(previous => ({ ...previous, hillshade: value }))}/></section>
-          <div className="map-style-selector analysis-mode-selector" role="group" aria-label={t('Analysis mode')}><button type="button" className={mode !== 'axis' ? 'active' : ''} aria-pressed={mode !== 'axis'} onClick={() => { setMode('point'); setAxisStart(null); setAxisRoute(null); setProfiles([]); setProfilesOpen(false); setHoverPoint(null); }}><Layers size={15}/>{t('Watershed analysis')}</button><button type="button" className={mode === 'axis' ? 'active' : ''} aria-pressed={mode === 'axis'} onClick={() => { setMode('axis'); setFirstCorner(null); setAxisStart(null); setAxisRoute(null); setProfiles([]); setProfilesOpen(false); setNotice('Select the axis start point.'); }}><Route size={15}/>{t('Movement axis')}</button></div>
-          <div className="area-actions"><button className="button button-secondary full" onClick={() => { setMode(mode === 'area' ? 'point' : 'area'); setFirstCorner(null); setAxisStart(null); setAxisRoute(null); setNotice('Area of interest: choose two opposite corners.'); }}><Scan size={15}/>{t('Draw area of interest')}</button>{aoi && <IconButton icon={X} label={t('Clear area of interest')} onClick={() => { setAoi(null); setAreaHydrology(null); }}/>}</div>
+          <div className="map-style-selector analysis-mode-selector" role="group" aria-label={t('Analysis mode')}><button type="button" className={mode !== 'axis' ? 'active' : ''} aria-pressed={mode !== 'axis'} onClick={() => { setMode('point'); setAxisWaypoints([]); setAxisRoute(null); setAxisViewshed(null); setProfiles([]); setProfilesOpen(false); setHoverPoint(null); }}><Layers size={15}/>{t('Watershed analysis')}</button><button type="button" className={mode === 'axis' ? 'active' : ''} aria-pressed={mode === 'axis'} onClick={() => { setMode('axis'); setFirstCorner(null); setAxisWaypoints([]); setAxisRoute(null); setAxisViewshed(null); setProfiles([]); setProfilesOpen(false); setNotice('Select the axis start point.'); }}><Route size={15}/>{t('Movement axis')}</button></div>{mode === 'axis' && <div className="axis-waypoint-controls"><p>{t('Select at least two points in order. The axis will pass through them and minimize elevation changes between each pair.')}</p><div><span>{t('{count} axis points selected', { count: axisWaypoints.length })}</span><IconButton icon={Undo2} label={t('Undo last axis point')} disabled={!axisWaypoints.length || loading} onClick={undoAxisWaypoint}/><button className="button button-primary" disabled={axisWaypoints.length < 2 || loading} onClick={finishAxis}>{loading ? t('Calculating movement axis…') : t('Calculate axis')}</button></div></div>}
+          <div className="area-actions">{mode !== 'axis' && <button className="button button-secondary full" onClick={() => { setMode(mode === 'area' ? 'point' : 'area'); setFirstCorner(null); setAxisWaypoints([]); setAxisRoute(null); setNotice('Area of interest: choose two opposite corners.'); }}><Scan size={15}/>{t('Draw area of interest')}</button>}{aoi && <IconButton icon={X} label={t('Clear area of interest')} onClick={() => { setAoi(null); setAreaHydrology(null); }}/>}</div>
+            {mode !== 'point' && !(mode === 'axis' && (axisRoute || loading)) && <div className="drawing-status"><span className="connection-dot"/>{t(mode === 'area' ? firstCorner ? 'Choose opposite corner' : 'Draw area of interest' : mode === 'axis' ? t('Select axis point {number}', { number: axisWaypoints.length + 1 }) : 'Choose profile endpoint')}<button onClick={() => { setMode('point'); setFirstCorner(null); setAxisWaypoints([]); setAxisRoute(null); }} aria-label={t('Cancel drawing')}><X size={14}/></button></div>}
           <section className="point-section">{selected ? <><div className="section-label"><span><MapPin size={14}/>{t('SELECTED POINT')}</span><span className="point-status">{t(loading ? 'Loading' : index >= 0 ? 'DEM verified' : 'Outside coverage')}</span></div>
             <h2>{t(pointName)}</h2><div className="coordinates" dir="ltr"><span>{selected[0].toFixed(5)}° N</span><span>{selected[1].toFixed(5)}° E</span><IconButton icon={Crosshair} label={t('Center on selected point')} onClick={() => mapRef.current.setView(selected, 12)}/></div>
             {loading ? <div className="loading-status"><LoaderCircle size={14} className="spin"/><span>{t(analysisPhase === 'calculating' ? 'Calculating watershed in background…' : 'Loading elevation tiles… {progress}%', { progress: format(progress * 100) })}</span></div> : index < 0 ? <button className="button button-primary full" onClick={() => fetchTerrain(selected, pointName, null, true)}><Download size={16}/>{t('Retry point analysis')}</button> : <p className="point-action-hint">{t(current ? 'Select another map point to analyze another watershed.' : 'The watershed will be calculated automatically when you select a point.')}</p>}
@@ -586,11 +646,11 @@ function App() {
         <div className="sidebar-footer"><span className={`connection-dot ${loading ? 'loading' : ''}`}/><span>{loading ? t('Connecting to elevation data') : model ? t('Terrain grid · {resolution} m', { resolution: format(model.resolution) }) : t(selected ? 'Terrain data unavailable' : 'Ready to analyze')}</span><button title={t('Data sources and limitations')} aria-label={t('Data sources and limitations')} onClick={() => setModal('sources')}><Info size={15}/></button></div>
       </aside>
       <section className="map-workspace">
-        <TerrainMap {...{ mapRef, model, selected, deletePromptId, hasAnalysis: Boolean(current), selectedAnalysisVisible: current?.visible !== false, results, activeId, pendingSnap, layers, hoverPoint, mode, aoi, areaHydrology, axisStart, axisRoute, language }} profiles={profilesOpen ? profiles : []} onSelect={selectPoint} onDraw={handleDraw} onOutletClick={point => { const outlet = pointIndex(model, ...point); calculate(outlet, point); }} onAnalysisNumberClick={id => { const analysis = results.find(item => item.id === id); if (!analysis) return; if (analysis.id !== activeId) activateAnalysis(analysis); setDeletePromptId(id); setSidebarOpen(true); setMobilePanelOpen(false); }} onDeleteAnalysis={() => deletePromptId && removeAnalysis(deletePromptId)} onDismissDelete={() => setDeletePromptId(null)}/>
+        <TerrainMap {...{ mapRef, model, selected, deletePromptId, hasAnalysis: Boolean(current), selectedAnalysisVisible: current?.visible !== false, results, activeId, pendingSnap, layers, hoverPoint, mode, aoi, areaHydrology, axisWaypoints, axisRoute, axisViewshed, language }} profiles={profilesOpen ? profiles : []} onSelect={selectPoint} onDraw={handleDraw} onOutletClick={point => { const outlet = pointIndex(model, ...point); calculate(outlet, point); }} onAnalysisNumberClick={id => { const analysis = results.find(item => item.id === id); if (!analysis) return; if (analysis.id !== activeId) activateAnalysis(analysis); setDeletePromptId(id); setSidebarOpen(true); setMobilePanelOpen(false); }} onDeleteAnalysis={() => deletePromptId && removeAnalysis(deletePromptId)} onDismissDelete={() => setDeletePromptId(null)}/>
         <div className="map-topbar"><div className="map-search"><form onSubmit={search}><Search size={18}/><input aria-label={t('Search a place or coordinates')} placeholder={t('Search a place or coordinates')} value={query} onChange={event => { setQuery(event.target.value); setSearchOpen(true); }} onFocus={() => setSearchOpen(true)} onKeyDown={event => { if (event.key === 'Escape') setSearchOpen(false); }}/>{searching ? <LoaderCircle size={17} className="spin"/> : <kbd>↵</kbd>}</form>{searchOpen && <div className="search-results"><div className="search-heading">{t(query ? 'MATCHING PLACES' : 'EXPLORE THE REGION')}<button aria-label={t('Close search')} onClick={() => setSearchOpen(false)}><X size={14}/></button></div>{filteredPlaces.map(place => <button key={place.name} onClick={() => choosePlace(place)}><MapPin size={15}/><span>{t(place.name)}</span><ArrowUpRight size={13}/></button>)}<small>{t('Coordinates: latitude, longitude (WGS 84)')}</small></div>}</div></div>
         <div className="map-tools"><div className="tool-group zoom-tools"><IconButton icon={Plus} label={t('Zoom in')} onClick={() => mapRef.current.zoomIn()}/><IconButton icon={Minus} label={t('Zoom out')} onClick={() => mapRef.current.zoomOut()}/></div><div className="tool-group"><IconButton icon={LocateFixed} label={t('Go to selected point')} disabled={!selected} onClick={() => mapRef.current.setView(selected, 12)}/><IconButton icon={Maximize} label={t('Show Israel and neighbors')} onClick={() => mapRef.current.fitBounds(REGION_BOUNDS, { padding: [28, 28], maxZoom: 7 })}/></div></div>
-        {mode !== 'point' && !(mode === 'axis' && (axisRoute || loading)) && <div className="drawing-status"><span className="connection-dot"/>{t(mode === 'area' ? firstCorner ? 'Choose opposite corner' : 'Draw area of interest' : mode === 'axis' ? axisStart ? 'Choose axis endpoint' : 'Choose axis start point' : 'Choose profile endpoint')}<button onClick={() => { setMode('point'); setFirstCorner(null); setAxisStart(null); setAxisRoute(null); }} aria-label={t('Cancel drawing')}><X size={14}/></button></div>}
-        {profilesOpen && profiles.length > 0 && <div className="map-bottom with-profiles"><div className="profiles-panel"><div className="profiles-header"><h3><Mountain size={17}/>{t(axisRoute ? 'Movement axis' : 'Elevation profiles')} <span>{axisRoute ? t('Least elevation change') : t('{count} transects', { count: profiles.length })}</span></h3><div><span className="profile-source">{format(model?.resolution)} {t('m')} DEM</span><IconButton icon={X} label={t('Close elevation profiles')} onClick={() => { setProfilesOpen(false); setHoverPoint(null); }}/></div></div>{axisRoute && <div className="axis-metrics"><div><small>{t('Axis length')}</small><strong>{format(axisRoute.length / 1000, 2)} {t('km')}</strong></div><div><small>{t('Total ascent')}</small><strong>{format(axisRoute.ascent)} {t('m')}</strong></div><div><small>{t('Total descent')}</small><strong>{format(axisRoute.descent)} {t('m')}</strong></div></div>}<div className="profiles-grid">{profiles.map((profile, profileIndex) => <ProfileChart key={profileIndex} profile={profile} index={profileIndex} onHover={setHoverPoint} language={language}/>)}</div></div></div>}
+        {mode !== 'point' && !(mode === 'axis' && (axisRoute || loading)) && <div className="drawing-status"><span className="connection-dot"/>{t(mode === 'area' ? firstCorner ? 'Choose opposite corner' : 'Draw area of interest' : mode === 'axis' ? t('Select axis point {number}', { number: axisWaypoints.length + 1 }) : 'Choose profile endpoint')}<button onClick={() => { setMode('point'); setFirstCorner(null); setAxisWaypoints([]); setAxisRoute(null); }} aria-label={t('Cancel drawing')}><X size={14}/></button></div>}
+        {profilesOpen && profiles.length > 0 && <div className="map-bottom with-profiles"><div className="profiles-panel"><div className="profiles-header"><h3><Mountain size={17}/>{t(axisRoute ? 'Movement axis' : 'Elevation profiles')} <span>{axisRoute ? t('Least elevation change') : t('{count} transects', { count: profiles.length })}</span></h3><div><span className="profile-source">{format(model?.resolution)} {t('m')} DEM</span><IconButton icon={X} label={t('Close elevation profiles')} onClick={() => { setProfilesOpen(false); setHoverPoint(null); }}/></div></div>{axisRoute && <><div className="axis-metrics"><div><small>{t('Axis length')}</small><strong>{format(axisRoute.length / 1000, 2)} {t('km')}</strong></div><div><small>{t('Total ascent')}</small><strong>{format(axisRoute.ascent)} {t('m')}</strong></div><div><small>{t('Total descent')}</small><strong>{format(axisRoute.descent)} {t('m')}</strong></div></div><div className="viewshed-controls"><label htmlFor="viewshed-radius">{t('Visibility radius')}<output>{format(viewshedRadius / 1000, 2)} {t('km')}</output></label><input id="viewshed-radius" type="range" min="250" max="5000" step="250" value={viewshedRadius} onChange={event => setViewshedRadius(Number(event.target.value))}/><div className="viewshed-actions"><button className="button button-secondary" disabled={loading} onClick={calculateAxisViewshed}>{loading ? <LoaderCircle size={14} className="spin"/> : <Eye size={14}/>}<span>{t(axisViewshed ? 'Update visibility' : 'Calculate visibility')}</span></button>{axisViewshed && <IconButton icon={EyeOff} label={t('Hide visibility layer')} onClick={() => setAxisViewshed(null)}/>}</div>{axisViewshed && <><div className="viewshed-legend"><span className="viewshed-swatch"/><span>{t('Visible from route')} · {t('{count} visible cells', { count: format(axisViewshed.visibleCells) })}</span></div><small className="viewshed-assumption">{t('Observer height 1.7 m; route height 1.5 m.')}</small></>}{axisViewshed?.partial && <p className="viewshed-warning" role="status">{t('Visibility extends beyond available elevation coverage; the shaded result is partial.')}</p>}</div></>}<div className="profiles-grid">{profiles.map((profile, profileIndex) => <ProfileChart key={profileIndex} profile={profile} index={profileIndex} onHover={setHoverPoint} language={language}/>)}</div></div></div>}
         {notice && <div className="toast" role="status"><Info size={17}/><span>{t(notice)}</span><button aria-label={t('Dismiss message')} onClick={() => setNotice('')}><X size={15}/></button></div>}
       </section>
     </main>
