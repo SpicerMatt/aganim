@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import 'fake-indexeddb/auto';
-import { buildModel, calculateTerrainAxis, calculateTerrainAxisThroughPoints, routeViewshed, delineate, delineateCached, exportCollection, makeProfile, indexPoint, snapPoint, hydrologyWithinBounds } from '../src/hydrology.js';
+import { buildModel, calculateTerrainAxis, calculateTerrainAxisThroughPoints, routeViewshed, delineate, delineateCached, exportCollection, makeProfile, indexPoint, project, snapPoint, hydrologyWithinBounds } from '../src/hydrology.js';
 import { readCached, writeCached, clearCache, cacheStats, setCacheEnabled, MAX_CACHE_BYTES } from '../src/cache.js';
 import { createTranslator } from '../src/i18n.js';
 import { EMPTY_ANALYSES, createWatershedAnalysis, analysesReducer } from '../src/analyses.js';
@@ -115,8 +115,11 @@ test('English and Hebrew translations preserve values and source names', () => {
   assert.equal(hebrew('AGANIM | Israel & Neighbors'), 'AGANIM | ישראל והסביבה');
   assert.equal(hebrew('Add two or more points. Each consecutive pair is connected with a straight line.'), 'סמנו שתי נקודות או יותר. כל שתי נקודות עוקבות יחוברו בקו ישר.');
   assert.equal(hebrew('Straight segments'), 'קטעים ישרים');
+  assert.equal(hebrew('Example: search for Jordan River, northern Israel, select it, then choose the nearby channel outlet to calculate its watershed.'), 'דוגמה: חפשו "נהר הירדן, צפון ישראל", בחרו אותו, ואז בחרו את מוצא הערוץ הסמוך לחישוב האגן.');
   assert.equal(hebrew("Don't show this again"), 'אל תציג לי שוב');
   assert.equal(hebrew('Example: choose a 2 km radius; red terrain can see at least one sampled point on the axis.'), 'דוגמה: בחרו רדיוס 2 ק״מ; מהשטח האדום רואים לפחות נקודת דגימה אחת על הציר.');
+  assert.equal(hebrew('Rotate map clockwise 45 degrees'), 'סיבוב המפה 45 מעלות עם כיוון השעון');
+  assert.equal(hebrew('Reset map rotation to north'), 'איפוס סיבוב המפה לצפון');
   assert.equal(hebrew('Analysis {number}', { number: 3 }), 'ניתוח 3');
   assert.equal(hebrew('Name watershed {number}', { number: 2 }), 'מתן שם לאגן 2');
 });
@@ -141,7 +144,18 @@ test('boundaries are closed GeoJSON rings and exports include drainage', () => {
 });
 
 test('edge-reaching watersheds are marked partial', () => {
-  assert.equal(delineate(model, 31 * width + 16).partial, true);
+  const result = delineate(model, 31 * width + 16);
+  assert.equal(result.partial, true);
+  assert.equal(result.boundaryLines.geometry.type, 'MultiLineString');
+  assert.ok(result.boundaryLines.geometry.coordinates.length > 0);
+  for (const line of result.boundaryLines.geometry.coordinates) for (let index = 0; index < line.length - 1; index++) {
+    const start = project(line[index][1], line[index][0]);
+    const end = project(line[index + 1][1], line[index + 1][0]);
+    const verticalEdge = Math.abs(start[0] - end[0]) < 0.01 && (Math.abs(start[0] - model.origin[0]) < 0.01 || Math.abs(start[0] - model.origin[0] - model.width) < 0.01);
+    const horizontalEdge = Math.abs(start[1] - end[1]) < 0.01 && (Math.abs(start[1] - model.origin[1]) < 0.01 || Math.abs(start[1] - model.origin[1] - model.height) < 0.01);
+    assert.equal(verticalEdge || horizontalEdge, false);
+  }
+  for (const polygon of result.boundary.geometry.coordinates) for (const ring of polygon) assert.deepEqual(ring[0], ring.at(-1));
 });
 
 test('area hydrology produces streams and terrain divides, and flags incomplete DEM coverage', async () => {

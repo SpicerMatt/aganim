@@ -511,6 +511,31 @@ export function snapPoint(model, index, radius = 650) {
   return { index: best, point: indexPoint(model, best), distance };
 }
 
+function boundaryLinesWithoutGridEdges(boundary, model) {
+  const coordinates = [];
+  const [originX, originY] = model.origin;
+  const maxX = originX + model.width;
+  const maxY = originY + model.height;
+  for (const polygon of boundary.geometry.coordinates) for (const ring of polygon) {
+    let line = [];
+    const finishLine = () => { if (line.length > 1) coordinates.push(line); line = []; };
+    const projected = ring.map(([lng, lat]) => project(lat, lng));
+    for (let index = 0; index < projected.length - 1; index++) {
+      const start = projected[index];
+      const end = projected[index + 1];
+      const verticalEdge = Math.abs(start[0] - end[0]) < 0.01 && (Math.abs(start[0] - originX) < 0.01 || Math.abs(start[0] - maxX) < 0.01);
+      const horizontalEdge = Math.abs(start[1] - end[1]) < 0.01 && (Math.abs(start[1] - originY) < 0.01 || Math.abs(start[1] - maxY) < 0.01);
+      if (verticalEdge || horizontalEdge) { finishLine(); continue; }
+      const point = ring[index];
+      const nextPoint = ring[index + 1];
+      if (!line.length) line.push(point);
+      line.push(nextPoint);
+    }
+    finishLine();
+  }
+  return { type: 'Feature', properties: { kind: 'watershed-boundary-lines' }, geometry: { type: 'MultiLineString', coordinates } };
+}
+
 export function delineate(model, outlet) {
   if (!Number.isInteger(outlet) || outlet < 0 || outlet >= model.width * model.height) throw new RangeError('Outlet is outside terrain coverage');
   const { width, height } = model;
@@ -536,6 +561,7 @@ export function delineate(model, outlet) {
     const [lat, lng] = unproject(model.origin[0] + column, model.origin[1] + row);
     return [lng, lat];
   })));
+  const boundary = { type: 'Feature', properties: { kind: 'watershed', source: SOURCE, resolution_m: model.resolution, area_km2: count * model.resolution ** 2 / 1e6, partial }, geometry: { type: 'MultiPolygon', coordinates } };
   const channels = [];
   const threshold = Math.max(50, Math.min(350, Math.round(count / 70)));
   for (let index = 0; index < mask.length; index++) {
@@ -546,7 +572,7 @@ export function delineate(model, outlet) {
   const downstream = [];
   for (let index = outlet; index >= 0 && downstream.length < width * height; index = model.flow[index]) downstream.push(indexPoint(model, index).reverse());
   return { outlet, mask, count, area: count * model.resolution ** 2 / 1e6, minimum, maximum, relief: maximum - minimum, partial,
-    boundary: { type: 'Feature', properties: { kind: 'watershed', source: SOURCE, resolution_m: model.resolution, area_km2: count * model.resolution ** 2 / 1e6, partial }, geometry: { type: 'MultiPolygon', coordinates } },
+    boundary, boundaryLines: partial ? boundaryLinesWithoutGridEdges(boundary, model) : null,
     channels: { type: 'Feature', properties: { kind: 'drainage', source: SOURCE }, geometry: { type: 'MultiLineString', coordinates: channels } },
     downstream: { type: 'Feature', properties: { kind: 'downstream', partial: true }, geometry: { type: 'LineString', coordinates: downstream.length > 1 ? downstream : [downstream[0], downstream[0]] } }
   };
@@ -556,6 +582,7 @@ export async function delineateCached(model, outlet) {
   const key = model.key ? `watershed:${model.key}:${outlet}` : null;
   const cached = key ? await readCached(key) : null;
   if (cached) return { ...cached, cacheHit: true };
+    if (cached) return { ...cached, boundaryLines: cached.partial ? boundaryLinesWithoutGridEdges(cached.boundary, model) : null, cacheHit: true };
   const result = delineate(model, outlet);
   if (key) {
     const bytes = result.mask.byteLength + JSON.stringify([result.boundary, result.channels, result.downstream]).length * 2 + 512;
