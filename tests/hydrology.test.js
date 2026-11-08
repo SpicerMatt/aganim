@@ -113,6 +113,10 @@ test('English and Hebrew translations preserve values and source names', () => {
   assert.ok(hebrew('Elevation data').length > 0);
   assert.equal(english('AGANIM | Israel & Neighbors'), 'AGANIM | Israel & Neighbors');
   assert.equal(hebrew('AGANIM | Israel & Neighbors'), 'AGANIM | ישראל והסביבה');
+  assert.equal(hebrew('Add two or more points. Each consecutive pair is connected with a straight line.'), 'סמנו שתי נקודות או יותר. כל שתי נקודות עוקבות יחוברו בקו ישר.');
+  assert.equal(hebrew('Straight segments'), 'קטעים ישרים');
+  assert.equal(hebrew("Don't show this again"), 'אל תציג לי שוב');
+  assert.equal(hebrew('Example: choose a 2 km radius; red terrain can see at least one sampled point on the axis.'), 'דוגמה: בחרו רדיוס 2 ק״מ; מהשטח האדום רואים לפחות נקודת דגימה אחת על הציר.');
   assert.equal(hebrew('Analysis {number}', { number: 3 }), 'ניתוח 3');
   assert.equal(hebrew('Name watershed {number}', { number: 2 }), 'מתן שם לאגן 2');
 });
@@ -180,7 +184,7 @@ test('terrain axis returns an endpoint-to-endpoint route and elevation profile m
   assert.equal(axis.totalVariation, axis.ascent + axis.descent);
 });
 
-test('terrain axis routes around a steep ridge to minimize elevation change', () => {
+test('standalone terrain route helper can detour around a steep ridge', () => {
   const width = 9;
   const height = 7;
   const elevations = new Float32Array(width * height);
@@ -195,13 +199,24 @@ test('terrain axis routes around a steep ridge to minimize elevation change', ()
   assert.ok(axis.path.every(point => point[0] !== undefined));
 });
 
-test('multi-waypoint terrain axis passes through each waypoint and combines metrics', () => {
+test('multi-waypoint terrain axis uses straight segments through every waypoint and samples their elevation', () => {
   const waypoints = [10 * width + 8, 10 * width + 16, 10 * width + 23].map(index => indexPoint(model, index));
   const axis = calculateTerrainAxisThroughPoints(model, waypoints);
-  for (const waypoint of waypoints) assert.ok(axis.path.some(point => Math.hypot(point[0] - waypoint[0], point[1] - waypoint[1]) < 0.00002));
-  assert.equal(axis.samples.length, 121);
+  assert.deepEqual(axis.path, waypoints);
+  assert.ok(axis.samples.length > waypoints.length);
   assert.ok(axis.length > 0);
   assert.equal(axis.totalVariation, axis.ascent + axis.descent);
+
+  const ridgeWidth = 9;
+  const ridgeHeight = 7;
+  const elevations = new Float32Array(ridgeWidth * ridgeHeight);
+  for (let row = 1; row < ridgeHeight - 1; row++) elevations[row * ridgeWidth + 4] = 100;
+  const ridgeModel = { width: ridgeWidth, height: ridgeHeight, origin: [256, 256], resolution: 10, elevations };
+  const ridgeWaypoints = [indexPoint(ridgeModel, 3 * ridgeWidth + 1), indexPoint(ridgeModel, 3 * ridgeWidth + 7)];
+  const straightAxis = calculateTerrainAxisThroughPoints(ridgeModel, ridgeWaypoints);
+  assert.deepEqual(straightAxis.path, ridgeWaypoints);
+  assert.equal(straightAxis.maximum, 100);
+  assert.ok(straightAxis.totalVariation > 0);
 });
 
 test('route viewshed marks flat terrain visible and blocks cells behind a ridge', () => {

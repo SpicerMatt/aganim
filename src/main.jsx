@@ -169,10 +169,11 @@ function TerrainMap({ mapRef, model, selected, deletePromptId, onDeleteAnalysis,
       L.polyline([selected, pendingSnap.point], { color: '#bc7f39', dashArray: '4 5', weight: 2 }).addTo(group);
     }
     axisWaypoints.forEach((point, index) => L.circleMarker(point, { radius: 6, color: '#fff', weight: 2, fillColor: '#378365', fillOpacity: 1 }).bindTooltip(String(index + 1), { permanent: true, direction: 'top', offset: [0, -5] }).addTo(group));
-    if (axisRoute?.path?.length > 1) {
-      L.polyline(axisRoute.path, { color: '#fff', weight: 7, opacity: 0.9, interactive: false }).addTo(group);
-      L.polyline(axisRoute.path, { color: '#d58a32', weight: 3.5, opacity: 1, interactive: false }).addTo(group);
-      L.circleMarker(axisRoute.path.at(-1), { radius: 6, color: '#fff', weight: 2, fillColor: '#b94f40', fillOpacity: 1 }).bindTooltip(t('Axis destination')).addTo(group);
+    const axisPath = axisRoute?.path?.length > 1 ? axisRoute.path : axisWaypoints;
+    if (axisPath.length > 1) {
+      L.polyline(axisPath, { color: '#fff', weight: 7, opacity: 0.9, interactive: false }).addTo(group);
+      L.polyline(axisPath, { color: '#d58a32', weight: 3.5, opacity: 1, interactive: false }).addTo(group);
+      L.circleMarker(axisPath.at(-1), { radius: 6, color: '#fff', weight: 2, fillColor: '#b94f40', fillOpacity: 1 }).bindTooltip(t('Axis destination')).addTo(group);
     }
     profiles.forEach((profile, index) => {
       L.polyline(profile.samples.map(sample => sample.point), { color: index ? '#b77b45' : '#5a7b72', dashArray: '5 6', weight: 2 }).addTo(group);
@@ -227,10 +228,11 @@ function ProfileChart({ profile, onHover, index, language }) {
   const plotY = elevation => 119 - (elevation - min) / (max - min) * 94;
   const line = profile.samples.map((sample, sampleIndex) => sample.elevation === null ? '' : `${sampleIndex === 0 || profile.samples[sampleIndex - 1].elevation === null ? 'M' : 'L'}${plotX(sample.distance)},${plotY(sample.elevation)}`).join(' ');
   const color = index ? '#c28a55' : '#4b8c72';
-  return <div className="profile-chart"><div className="profile-chart-heading"><span><i style={{ background: color }}/>{profile.kind === 'axis' ? t('Movement axis') : index ? 'B' : 'A'} <b dir="ltr">{profile.bearing.toFixed(0)}°</b> <span className="muted">{t(profile.kind === 'axis' ? 'Least elevation change' : profileDirection(profile.bearing))}</span></span><span>{format(profile.length / 1000, 1)} {t('km')}</span></div>
+  return <div className="profile-chart"><div className="profile-chart-heading"><span><i style={{ background: color }}/>{profile.kind === 'axis' ? t('Movement axis') : index ? 'B' : 'A'} <b dir="ltr">{profile.bearing.toFixed(0)}°</b> <span className="muted">{t(profile.kind === 'axis' ? 'Straight segments' : profileDirection(profile.bearing))}</span></span><span>{format(profile.length / 1000, 1)} {t('km')}</span></div>
     <svg viewBox="0 0 640 151" direction="ltr" role="img" aria-label={t('Elevation profile {number}, bearing {bearing} degrees', { number: index + 1, bearing: profile.bearing.toFixed(0) })} onMouseMove={event => {
       const box = event.currentTarget.getBoundingClientRect();
-      const sampleIndex = Math.max(0, Math.min(120, Math.round(((event.clientX - box.left) / box.width * 640 - 43) / 570 * 120)));
+      const lastSample = profile.samples.length - 1;
+      const sampleIndex = Math.max(0, Math.min(lastSample, Math.round(((event.clientX - box.left) / box.width * 640 - 43) / 570 * lastSample)));
       setActive(profile.samples[sampleIndex]); onHover(profile.samples[sampleIndex].point);
     }} onMouseLeave={() => { setActive(null); onHover(null); }}>
       <defs><linearGradient id={`profile-fill-${index}`} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={color} stopOpacity="0.25"/><stop offset="100%" stopColor={color} stopOpacity="0.025"/></linearGradient></defs>
@@ -279,7 +281,11 @@ function App() {
   const [query, setQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
   const [searching, setSearching] = useState(false);
-  const [modal, setModal] = useState(null);
+  const [skipWelcomeNextTime, setSkipWelcomeNextTime] = useState(false);
+  const [modal, setModal] = useState(() => {
+    try { return localStorage.getItem('agan-welcome-seen') === 'true' ? null : 'welcome'; }
+    catch { return 'welcome'; }
+  });
   const [savedCollections, setSavedCollections] = useState([]);
   const [collectionName, setCollectionName] = useState('');
   const [collectionBusy, setCollectionBusy] = useState(false);
@@ -294,6 +300,14 @@ function App() {
   const index = model && selected ? pointIndex(model, ...selected) : -1;
   const elevation = index >= 0 ? model.elevations[index] : null;
   const current = results.find(analysis => analysis.id === activeId);
+
+  function dismissWelcome() {
+    try {
+      if (skipWelcomeNextTime) localStorage.setItem('agan-welcome-seen', 'true');
+      else localStorage.removeItem('agan-welcome-seen');
+    } catch {}
+    setModal(null);
+  }
 
   useEffect(() => {
     document.documentElement.lang = language;
@@ -424,47 +438,28 @@ function App() {
       setNotice('Could not load hydrology for this area. Try a smaller area or check the connection.');
     }
   }
-  async function analyzeAxis(waypoints) {
-    const request = ++requestId.current;
+  async function calculateAxisViewshed() {
+    if (axisWaypoints.length < 2 || loading) return;
+    const waypoints = axisWaypoints;
     const midpoint = [waypoints.reduce((sum, point) => sum + point[0], 0) / waypoints.length, waypoints.reduce((sum, point) => sum + point[1], 0) / waypoints.length];
     const reuse = model && waypoints.every(point => pointIndex(model, ...point) >= 0) ? model : null;
-    setAxisRoute(null); setAxisViewshed(null); setSelected(null); setPointName(''); setPendingSnap(null);
+    const request = ++requestId.current;
     setLoading(true); setProgress(0); setAnalysisPhase(reuse ? 'calculating' : 'loading'); setError('');
-    setNotice('Calculating movement axis with the least elevation change…');
+    setNotice('Calculating visibility along the straight axis…');
     try {
-      const { axis, model: responseModel, expansionWarning } = await terrainTask('terrain-axis', { waypoints, point: midpoint, model: reuse, cacheEnabled: localCache }, (value, phase) => {
+      const { axis, viewshed, model: responseModel, expansionWarning } = await terrainTask('axis-viewshed', { waypoints, point: midpoint, model: reuse, radius: viewshedRadius, cacheEnabled: localCache }, (value, phase) => {
         if (request === requestId.current) { setProgress(value); setAnalysisPhase(phase); }
       });
       if (request !== requestId.current) return;
-      const data = responseModel || reuse;
-      setModel(data);
+      setModel(responseModel || reuse);
       setAxisRoute(axis);
-      setAxisViewshed(null);
+      setAxisViewshed(viewshed);
       setProfiles([{ ...axis, kind: 'axis' }]);
-      setProfilesOpen(true);
-      setLoading(false);
-      setCacheInfo(await cacheStats());
+      setProfilesOpen(false);
+      setLoading(false); setCacheInfo(await cacheStats());
       if (expansionWarning) setNotice(expansionWarning);
-      else if (axis.partial) setNotice('The movement axis reaches the edge of available elevation data and is partial.');
-      else setNotice('Movement axis calculated with reduced elevation changes.');
+      else setNotice(viewshed.partial ? 'The visibility area reaches beyond the loaded elevation coverage.' : 'Visibility area calculated for the selected radius.');
       mapRef.current.fitBounds(L.polyline(axis.path).getBounds(), { paddingTopLeft: [55, 75], paddingBottomRight: [65, 110], maxZoom: 14 });
-    } catch (failure) {
-      if (request !== requestId.current) return;
-      setLoading(false); setError('The movement axis could not be calculated between these points. Try points closer together or check elevation coverage.');
-      setAxisWaypoints([...waypoints]);
-    }
-  }
-  async function calculateAxisViewshed() {
-    if (!model || !axisRoute || loading) return;
-    const request = ++requestId.current;
-    setLoading(true); setProgress(0); setAnalysisPhase('calculating'); setError('');
-    try {
-      const { viewshed } = await terrainTask('axis-viewshed', { model, routeSamples: axisRoute.samples, radius: viewshedRadius, cacheEnabled: localCache }, value => {
-        if (request === requestId.current) { setProgress(value); setAnalysisPhase('calculating'); }
-      });
-      if (request !== requestId.current) return;
-      setAxisViewshed(viewshed); setLoading(false); setCacheInfo(await cacheStats());
-      setNotice(viewshed.partial ? 'The visibility area reaches beyond the loaded elevation coverage.' : 'Visibility area calculated for the selected radius.');
     } catch (failure) {
       if (request !== requestId.current) return;
       setLoading(false); setError('Could not calculate the axis visibility area. Try a smaller radius.');
@@ -476,7 +471,7 @@ function App() {
       setAxisViewshed(null);
       setProfiles([]); setProfilesOpen(false);
       setAxisWaypoints(previous => [...previous, point]);
-      setNotice('Axis point added. Add another point or calculate the axis.');
+      setNotice('Axis point added. Add another point or calculate visibility.');
     } else if (mode === 'area') {
       if (!firstCorner) { setFirstCorner(point); setNotice('Area of interest: select the opposite corner.'); }
       else { const bounds = [firstCorner, point]; setFirstCorner(null); setMode('point'); mapRef.current.fitBounds(bounds, { padding: [40, 40] }); analyzeArea(bounds); }
@@ -489,10 +484,6 @@ function App() {
       setProfiles(previous => [...previous.slice(-1), makeProfile(model, selected, bearing, length)]);
       setProfilesOpen(true); setMode('point');
     }
-  }
-  function finishAxis() {
-    if (axisWaypoints.length < 2 || loading) return;
-    analyzeAxis(axisWaypoints);
   }
   function undoAxisWaypoint() {
     setAxisWaypoints(previous => previous.slice(0, -1));
@@ -630,9 +621,9 @@ function App() {
         <div className="sidebar-scroll" id="mobile-analysis-content">
           <section className="analyses-section" ref={analysisListRef}><div className="section-title"><h3><Layers size={16}/>{t('Map analyses')} <span className="analysis-count">{results.length}</span></h3><div className="analysis-heading-actions"><IconButton icon={FolderOpen} label={t('Saved collections')} onClick={openCollections}/><IconButton icon={Scan} label={t('Fit all analyses')} disabled={!results.some(analysis => analysis.visible !== false)} onClick={zoomAllAnalyses}/><IconButton icon={analysesOnly ? ChevronDown : ChevronUp} label={t(analysesOnly ? 'Show full panel' : 'Show basins only')} disabled={!results.length} active={analysesOnly} onClick={() => setAnalysesOnly(!analysesOnly)}/></div></div>{results.length ? <ol className="analysis-list">{results.map(analysis => <li key={analysis.id} data-analysis-id={analysis.id} className={`${analysis.id === activeId ? 'active ' : ''}${analysis.visible === false ? 'analysis-hidden' : ''}`}><button className="analysis-select" aria-pressed={analysis.id === activeId} onClick={() => activateAnalysis(analysis)}><span className="analysis-number">{analysis.number}</span><span><strong>{analysis.name || t('Watershed')}</strong><small>{t(analysis.location || 'Selected terrain point')} · {formatArea(analysis.area)} {t('km²')}</small></span></button><input className="analysis-name-input" aria-label={t('Name watershed {number}', { number: analysis.number })} value={analysis.name} maxLength={60} placeholder={t('Name this watershed')} onFocus={() => dispatchAnalysis({ type: 'activate', id: analysis.id })} onChange={event => dispatchAnalysis({ type: 'rename', id: analysis.id, name: event.target.value })}/><IconButton className="analysis-visibility-button" icon={analysis.visible === false ? Eye : EyeOff} label={t(analysis.visible === false ? 'Show analysis {number}' : 'Hide analysis {number}', { number: analysis.number })} aria-pressed={analysis.visible !== false} onClick={() => dispatchAnalysis({ type: 'visibility', id: analysis.id, visible: analysis.visible === false })}/><IconButton className="analysis-delete-button" icon={X} label={t('Remove analysis {number}', { number: analysis.number })} onClick={() => removeAnalysis(analysis.id)}/></li>)}</ol> : <p className="analysis-empty">{t('No analyses on the map yet.')}</p>}</section>
           <section className="layers-section"><div className="section-title"><h3><Layers size={16}/>{t('Map layers')}</h3><SlidersHorizontal size={15}/></div><div className="map-style-selector" role="group" aria-label={t('Base map')}><button type="button" className={!layers.satellite ? 'active' : ''} aria-pressed={!layers.satellite} onClick={() => setLayers(previous => ({ ...previous, satellite: false }))}><Mountain size={15}/>{t('Topographic')}</button><button type="button" className={layers.satellite ? 'active' : ''} aria-pressed={layers.satellite} onClick={() => setLayers(previous => ({ ...previous, satellite: true }))}><Globe2 size={15}/>{t('Satellite')}</button></div><Toggle label={t('Drainage network')} icon={Route} checked={layers.drainage} onChange={value => setLayers(previous => ({ ...previous, drainage: value }))}/><Toggle label={t('Contour lines')} icon={Mountain} checked={layers.contours} onChange={value => setLayers(previous => ({ ...previous, contours: value }))}/><Toggle label={t('Hillshade')} icon={Layers} checked={layers.hillshade} onChange={value => setLayers(previous => ({ ...previous, hillshade: value }))}/></section>
-          <div className="map-style-selector analysis-mode-selector" role="group" aria-label={t('Analysis mode')}><button type="button" className={mode !== 'axis' ? 'active' : ''} aria-pressed={mode !== 'axis'} onClick={() => { setMode('point'); setAxisWaypoints([]); setAxisRoute(null); setAxisViewshed(null); setProfiles([]); setProfilesOpen(false); setHoverPoint(null); }}><Layers size={15}/>{t('Watershed analysis')}</button><button type="button" className={mode === 'axis' ? 'active' : ''} aria-pressed={mode === 'axis'} onClick={() => { setMode('axis'); setFirstCorner(null); setAxisWaypoints([]); setAxisRoute(null); setAxisViewshed(null); setProfiles([]); setProfilesOpen(false); setNotice('Select the axis start point.'); }}><Route size={15}/>{t('Movement axis')}</button></div>{mode === 'axis' && <div className="axis-waypoint-controls"><p>{t('Select at least two points in order. The axis will pass through them and minimize elevation changes between each pair.')}</p><div><span>{t('{count} axis points selected', { count: axisWaypoints.length })}</span><IconButton icon={Undo2} label={t('Undo last axis point')} disabled={!axisWaypoints.length || loading} onClick={undoAxisWaypoint}/><button className="button button-primary" disabled={axisWaypoints.length < 2 || loading} onClick={finishAxis}>{loading ? t('Calculating movement axis…') : t('Calculate axis')}</button></div></div>}
+          <div className="map-style-selector analysis-mode-selector" role="group" aria-label={t('Analysis mode')}><button type="button" className={mode !== 'axis' ? 'active' : ''} aria-pressed={mode !== 'axis'} onClick={() => { setMode('point'); setAxisWaypoints([]); setAxisRoute(null); setAxisViewshed(null); setProfiles([]); setProfilesOpen(false); setHoverPoint(null); }}><Layers size={15}/>{t('Watershed analysis')}</button><button type="button" className={mode === 'axis' ? 'active' : ''} aria-pressed={mode === 'axis'} onClick={() => { setMode('axis'); setFirstCorner(null); setAxisWaypoints([]); setAxisRoute(null); setAxisViewshed(null); setProfiles([]); setProfilesOpen(false); setNotice('Select the axis start point.'); }}><Route size={15}/>{t('Movement axis')}</button></div>{mode === 'axis' && <div className="axis-waypoint-controls"><p>{t('Select two or more points. Each consecutive pair is connected with a straight line.')}</p><div className="axis-waypoint-count"><span>{t('{count} axis points selected', { count: axisWaypoints.length })}</span><IconButton icon={Undo2} label={t('Undo last axis point')} disabled={!axisWaypoints.length || loading} onClick={undoAxisWaypoint}/></div>{axisWaypoints.length >= 2 && <><div className="viewshed-controls sidebar-viewshed-controls"><label htmlFor="viewshed-radius">{t('Visibility radius')}<output>{format(viewshedRadius / 1000, 1)} {t('km')}</output></label><input id="viewshed-radius" type="range" min="250" max="10000" step="250" value={viewshedRadius} onChange={event => { setViewshedRadius(Number(event.target.value)); setAxisViewshed(null); }}/><div className="viewshed-actions"><button className="button button-primary" disabled={loading} onClick={calculateAxisViewshed}>{loading ? <LoaderCircle size={14} className="spin"/> : <Eye size={14}/>}<span>{loading ? t('Calculating visibility…') : t(axisViewshed ? 'Update visibility' : 'Calculate visibility')}</span></button>{axisViewshed && <IconButton icon={EyeOff} label={t('Hide visibility layer')} onClick={() => setAxisViewshed(null)}/>}</div>{axisViewshed && <><div className="viewshed-legend"><span className="viewshed-swatch"/><span>{t('Visible from route')} · {t('{count} visible cells', { count: format(axisViewshed.visibleCells) })}</span></div><small className="viewshed-assumption">{t('Observer height 1.7 m; route height 1.5 m.')}</small></>}{axisViewshed?.partial && <p className="viewshed-warning" role="status">{t('Visibility extends beyond available elevation coverage; the shaded result is partial.')}</p>}</div>{axisRoute && <button className="button button-secondary full" onClick={() => setProfilesOpen(open => !open)}><Mountain size={15}/>{t(profilesOpen ? 'Hide elevation profile' : 'Show elevation profile')}</button>}</>}{error && <div className="error-message" role="alert"><AlertTriangle size={17}/><span>{t(error)}</span></div>}</div>}
           <div className="area-actions">{mode !== 'axis' && <button className="button button-secondary full" onClick={() => { setMode(mode === 'area' ? 'point' : 'area'); setFirstCorner(null); setAxisWaypoints([]); setAxisRoute(null); setNotice('Area of interest: choose two opposite corners.'); }}><Scan size={15}/>{t('Draw area of interest')}</button>}{aoi && <IconButton icon={X} label={t('Clear area of interest')} onClick={() => { setAoi(null); setAreaHydrology(null); }}/>}</div>
-            {mode !== 'point' && !(mode === 'axis' && (axisRoute || loading)) && <div className="drawing-status"><span className="connection-dot"/>{t(mode === 'area' ? firstCorner ? 'Choose opposite corner' : 'Draw area of interest' : mode === 'axis' ? t('Select axis point {number}', { number: axisWaypoints.length + 1 }) : 'Choose profile endpoint')}<button onClick={() => { setMode('point'); setFirstCorner(null); setAxisWaypoints([]); setAxisRoute(null); }} aria-label={t('Cancel drawing')}><X size={14}/></button></div>}
+            {mode !== 'point' && !(mode === 'axis' && loading) && <div className="drawing-status"><span className="connection-dot"/>{t(mode === 'area' ? firstCorner ? 'Choose opposite corner' : 'Draw area of interest' : mode === 'axis' ? t('Select axis point {number}', { number: axisWaypoints.length + 1 }) : 'Choose profile endpoint')}<button onClick={() => { setMode('point'); setFirstCorner(null); setAxisWaypoints([]); setAxisRoute(null); setAxisViewshed(null); setProfiles([]); setProfilesOpen(false); }} aria-label={t('Cancel drawing')}><X size={14}/></button></div>}
           <section className="point-section">{selected ? <><div className="section-label"><span><MapPin size={14}/>{t('SELECTED POINT')}</span><span className="point-status">{t(loading ? 'Loading' : index >= 0 ? 'DEM verified' : 'Outside coverage')}</span></div>
             <h2>{t(pointName)}</h2><div className="coordinates" dir="ltr"><span>{selected[0].toFixed(5)}° N</span><span>{selected[1].toFixed(5)}° E</span><IconButton icon={Crosshair} label={t('Center on selected point')} onClick={() => mapRef.current.setView(selected, 12)}/></div>
             {loading ? <div className="loading-status"><LoaderCircle size={14} className="spin"/><span>{t(analysisPhase === 'calculating' ? 'Calculating watershed in background…' : 'Loading elevation tiles… {progress}%', { progress: format(progress * 100) })}</span></div> : index < 0 ? <button className="button button-primary full" onClick={() => fetchTerrain(selected, pointName, null, true)}><Download size={16}/>{t('Retry point analysis')}</button> : <p className="point-action-hint">{t(current ? 'Select another map point to analyze another watershed.' : 'The watershed will be calculated automatically when you select a point.')}</p>}
@@ -649,13 +640,20 @@ function App() {
         <TerrainMap {...{ mapRef, model, selected, deletePromptId, hasAnalysis: Boolean(current), selectedAnalysisVisible: current?.visible !== false, results, activeId, pendingSnap, layers, hoverPoint, mode, aoi, areaHydrology, axisWaypoints, axisRoute, axisViewshed, language }} profiles={profilesOpen ? profiles : []} onSelect={selectPoint} onDraw={handleDraw} onOutletClick={point => { const outlet = pointIndex(model, ...point); calculate(outlet, point); }} onAnalysisNumberClick={id => { const analysis = results.find(item => item.id === id); if (!analysis) return; if (analysis.id !== activeId) activateAnalysis(analysis); setDeletePromptId(id); setSidebarOpen(true); setMobilePanelOpen(false); }} onDeleteAnalysis={() => deletePromptId && removeAnalysis(deletePromptId)} onDismissDelete={() => setDeletePromptId(null)}/>
         <div className="map-topbar"><div className="map-search"><form onSubmit={search}><Search size={18}/><input aria-label={t('Search a place or coordinates')} placeholder={t('Search a place or coordinates')} value={query} onChange={event => { setQuery(event.target.value); setSearchOpen(true); }} onFocus={() => setSearchOpen(true)} onKeyDown={event => { if (event.key === 'Escape') setSearchOpen(false); }}/>{searching ? <LoaderCircle size={17} className="spin"/> : <kbd>↵</kbd>}</form>{searchOpen && <div className="search-results"><div className="search-heading">{t(query ? 'MATCHING PLACES' : 'EXPLORE THE REGION')}<button aria-label={t('Close search')} onClick={() => setSearchOpen(false)}><X size={14}/></button></div>{filteredPlaces.map(place => <button key={place.name} onClick={() => choosePlace(place)}><MapPin size={15}/><span>{t(place.name)}</span><ArrowUpRight size={13}/></button>)}<small>{t('Coordinates: latitude, longitude (WGS 84)')}</small></div>}</div></div>
         <div className="map-tools"><div className="tool-group zoom-tools"><IconButton icon={Plus} label={t('Zoom in')} onClick={() => mapRef.current.zoomIn()}/><IconButton icon={Minus} label={t('Zoom out')} onClick={() => mapRef.current.zoomOut()}/></div><div className="tool-group"><IconButton icon={LocateFixed} label={t('Go to selected point')} disabled={!selected} onClick={() => mapRef.current.setView(selected, 12)}/><IconButton icon={Maximize} label={t('Show Israel and neighbors')} onClick={() => mapRef.current.fitBounds(REGION_BOUNDS, { padding: [28, 28], maxZoom: 7 })}/></div></div>
-        {mode !== 'point' && !(mode === 'axis' && (axisRoute || loading)) && <div className="drawing-status"><span className="connection-dot"/>{t(mode === 'area' ? firstCorner ? 'Choose opposite corner' : 'Draw area of interest' : mode === 'axis' ? t('Select axis point {number}', { number: axisWaypoints.length + 1 }) : 'Choose profile endpoint')}<button onClick={() => { setMode('point'); setFirstCorner(null); setAxisWaypoints([]); setAxisRoute(null); }} aria-label={t('Cancel drawing')}><X size={14}/></button></div>}
-        {profilesOpen && profiles.length > 0 && <div className="map-bottom with-profiles"><div className="profiles-panel"><div className="profiles-header"><h3><Mountain size={17}/>{t(axisRoute ? 'Movement axis' : 'Elevation profiles')} <span>{axisRoute ? t('Least elevation change') : t('{count} transects', { count: profiles.length })}</span></h3><div><span className="profile-source">{format(model?.resolution)} {t('m')} DEM</span><IconButton icon={X} label={t('Close elevation profiles')} onClick={() => { setProfilesOpen(false); setHoverPoint(null); }}/></div></div>{axisRoute && <><div className="axis-metrics"><div><small>{t('Axis length')}</small><strong>{format(axisRoute.length / 1000, 2)} {t('km')}</strong></div><div><small>{t('Total ascent')}</small><strong>{format(axisRoute.ascent)} {t('m')}</strong></div><div><small>{t('Total descent')}</small><strong>{format(axisRoute.descent)} {t('m')}</strong></div></div><div className="viewshed-controls"><label htmlFor="viewshed-radius">{t('Visibility radius')}<output>{format(viewshedRadius / 1000, 2)} {t('km')}</output></label><input id="viewshed-radius" type="range" min="250" max="5000" step="250" value={viewshedRadius} onChange={event => setViewshedRadius(Number(event.target.value))}/><div className="viewshed-actions"><button className="button button-secondary" disabled={loading} onClick={calculateAxisViewshed}>{loading ? <LoaderCircle size={14} className="spin"/> : <Eye size={14}/>}<span>{t(axisViewshed ? 'Update visibility' : 'Calculate visibility')}</span></button>{axisViewshed && <IconButton icon={EyeOff} label={t('Hide visibility layer')} onClick={() => setAxisViewshed(null)}/>}</div>{axisViewshed && <><div className="viewshed-legend"><span className="viewshed-swatch"/><span>{t('Visible from route')} · {t('{count} visible cells', { count: format(axisViewshed.visibleCells) })}</span></div><small className="viewshed-assumption">{t('Observer height 1.7 m; route height 1.5 m.')}</small></>}{axisViewshed?.partial && <p className="viewshed-warning" role="status">{t('Visibility extends beyond available elevation coverage; the shaded result is partial.')}</p>}</div></>}<div className="profiles-grid">{profiles.map((profile, profileIndex) => <ProfileChart key={profileIndex} profile={profile} index={profileIndex} onHover={setHoverPoint} language={language}/>)}</div></div></div>}
+        {mode !== 'point' && !(mode === 'axis' && loading) && <div className="drawing-status"><span className="connection-dot"/>{t(mode === 'area' ? firstCorner ? 'Choose opposite corner' : 'Draw area of interest' : mode === 'axis' ? t('Select axis point {number}', { number: axisWaypoints.length + 1 }) : 'Choose profile endpoint')}<button onClick={() => { setMode('point'); setFirstCorner(null); setAxisWaypoints([]); setAxisRoute(null); setAxisViewshed(null); setProfiles([]); setProfilesOpen(false); }} aria-label={t('Cancel drawing')}><X size={14}/></button></div>}
+        {profilesOpen && profiles.length > 0 && <div className="map-bottom with-profiles"><div className="profiles-panel"><div className="profiles-header"><h3><Mountain size={17}/>{t(axisRoute ? 'Movement axis' : 'Elevation profiles')} <span>{axisRoute ? t('Straight segments') : t('{count} transects', { count: profiles.length })}</span></h3><div><span className="profile-source">{format(model?.resolution)} {t('m')} DEM</span><IconButton icon={X} label={t('Close elevation profiles')} onClick={() => { setProfilesOpen(false); setHoverPoint(null); }}/></div></div>{axisRoute && <div className="axis-metrics"><div><small>{t('Axis length')}</small><strong>{format(axisRoute.length / 1000, 2)} {t('km')}</strong></div><div><small>{t('Total ascent')}</small><strong>{format(axisRoute.ascent)} {t('m')}</strong></div><div><small>{t('Total descent')}</small><strong>{format(axisRoute.descent)} {t('m')}</strong></div></div>}<div className="profiles-grid">{profiles.map((profile, profileIndex) => <ProfileChart key={profileIndex} profile={profile} index={profileIndex} onHover={setHoverPoint} language={language}/>)}</div></div></div>}
         {notice && <div className="toast" role="status"><Info size={17}/><span>{t(notice)}</span><button aria-label={t('Dismiss message')} onClick={() => setNotice('')}><X size={15}/></button></div>}
       </section>
     </main>
     <footer className="app-footer"><span><span className="footer-logo"><AppMark size={13}/></span>{t('An open view of our shared landscape.')}</span><span>{t('Terrain analysis, not a flood forecast.')}<span className="footer-dot">·</span><button onClick={() => setModal('sources')}>{t('Sources & limitations')}</button></span></footer>
-    {modal && <div className="modal-backdrop" onClick={() => setModal(null)}>
+        {modal === 'welcome' && <div className="modal-backdrop" onClick={dismissWelcome}><section className="modal welcome-modal" role="dialog" aria-modal="true" aria-label={t('Welcome to AGANIM')} onClick={event => event.stopPropagation()}>
+          <div className="modal-heading"><span className="modal-icon"><Route size={24}/></span><IconButton icon={X} label={t('Close dialog')} onClick={dismissWelcome}/></div>
+          <h2>{t('Welcome to AGANIM')}</h2><p>{t('Choose a tool in the analysis panel to explore terrain and visibility.')}</p>
+          <ol className="welcome-steps"><li><strong>{t('Watershed analysis')}</strong><span>{t('Example: click near a stream to see its contributing watershed.')}</span></li><li><strong>{t('Movement axis')}</strong><span>{t('Example: click A, B, then C; two straight segments appear immediately.')}</span></li><li><strong>{t('Visibility area')}</strong><span>{t('Example: choose a 2 km radius; red terrain can see at least one sampled point on the axis.')}</span></li><li><strong>{t('Elevation profile')}</strong><span>{t('Example: after a visibility check, choose Show elevation profile; close it to uncover the map.')}</span></li></ol>
+          <label className="welcome-skip"><input type="checkbox" checked={skipWelcomeNextTime} onChange={event => setSkipWelcomeNextTime(event.target.checked)}/><span>{t("Don't show this again")}</span></label>
+          <button className="button button-primary welcome-start" onClick={dismissWelcome}>{t('Start exploring')}<ArrowUpRight size={15}/></button>
+        </section></div>}
+        {modal && modal !== 'welcome' && <div className="modal-backdrop" onClick={() => setModal(null)}>
       {modal === 'collections' ? <section className="modal collections-modal" role="dialog" aria-modal="true" aria-label={t('Saved collections')} onClick={event => event.stopPropagation()}>
         <div className="modal-heading"><span className="modal-icon"><FolderOpen size={24}/></span><IconButton icon={X} label={t('Close dialog')} onClick={() => setModal(null)}/></div>
         <h2>{t('Saved collections')}</h2><p>{t('Keep named groups of watersheds on this device. Terrain data remains in the separate local cache.')}</p>

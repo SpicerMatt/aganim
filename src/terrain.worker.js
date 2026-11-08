@@ -24,7 +24,7 @@ self.onmessage = async ({ data: { id, type, ...options } }) => {
       self.postMessage({ id, value: { model: options.model ? null : model, point: options.point, proposed } });
       return;
     }
-    if (type === 'terrain-axis') {
+    if (type === 'axis-viewshed') {
       const waypoints = options.waypoints;
       if (!Array.isArray(waypoints) || waypoints.length < 2) throw new Error('A movement axis needs at least two points.');
       const midpoint = [waypoints.reduce((sum, point) => sum + point[0], 0) / waypoints.length, waypoints.reduce((sum, point) => sum + point[1], 0) / waypoints.length];
@@ -37,6 +37,7 @@ self.onmessage = async ({ data: { id, type, ...options } }) => {
       const windowSizes = [3, 5, 7].filter(size => size >= firstWindow);
       let model = null;
       let axis = null;
+      let viewshed = null;
       let expansionWarning = null;
       for (let attempt = 0; attempt < windowSizes.length; attempt++) {
         const windowTiles = windowSizes[attempt];
@@ -47,23 +48,20 @@ self.onmessage = async ({ data: { id, type, ...options } }) => {
             candidate = await loadModel(...midpoint, progress => self.postMessage({ id, progress: (attempt + progress) / windowSizes.length * 0.7, phase: 'loading' }), windowTiles);
           } catch (error) {
             if (!axis) throw error;
-            expansionWarning = 'Terrain coverage ended before the axis could be fully contained.';
+            expansionWarning = 'Terrain coverage ended before the route and visibility area could be fully covered.';
             break;
           }
         }
         if (!waypoints.every(point => pointIndex(candidate, ...point) >= 0)) throw new Error('One or more axis points are outside the available elevation data.');
         self.postMessage({ id, progress: 0.72 + attempt / windowSizes.length * 0.25, phase: 'calculating' });
         axis = calculateTerrainAxisThroughPoints(candidate, waypoints, progress => self.postMessage({ id, progress: 0.72 + attempt / windowSizes.length * 0.25 + progress * 0.2 / windowSizes.length, phase: 'calculating' }));
+        viewshed = routeViewshed(candidate, axis.samples, options.radius, progress => self.postMessage({ id, progress: 0.75 + progress * 0.24, phase: 'calculating' }));
         model = candidate;
-        if (!axis.partial) break;
-        if (attempt === windowSizes.length - 1) expansionWarning = 'The axis still reaches the edge of the largest available terrain window.';
+        if (!axis.partial && !viewshed.partial) break;
+        if (attempt === windowSizes.length - 1) expansionWarning = 'The route or visibility area still reaches the edge of the largest available terrain window.';
       }
-      self.postMessage({ id, value: { model: options.model && model === options.model ? null : model, axis, expansionWarning } });
-      return;
-    }
-    if (type === 'axis-viewshed') {
-      const viewshed = routeViewshed(options.model, options.routeSamples, options.radius, progress => self.postMessage({ id, progress, phase: 'calculating' }));
-      self.postMessage({ id, value: { viewshed } });
+      self.postMessage({ id, progress: 1, phase: 'calculating' });
+      self.postMessage({ id, value: { model: options.model && model === options.model ? null : model, axis, viewshed, expansionWarning } });
       return;
     }
     if (options.initial) {

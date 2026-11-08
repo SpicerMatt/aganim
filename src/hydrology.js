@@ -277,54 +277,64 @@ export function calculateTerrainAxis(model, startPoint, endPoint, onProgress = (
 
 export function calculateTerrainAxisThroughPoints(model, waypoints, onProgress = () => {}) {
   if (waypoints.length < 2) throw new RangeError('A movement axis needs at least two waypoints');
-  const segments = [];
-  for (let index = 0; index < waypoints.length - 1; index++) {
-    segments.push(calculateTerrainAxis(model, waypoints[index], waypoints[index + 1], progress => onProgress((index + progress) / (waypoints.length - 1))));
-    onProgress((index + 1) / (waypoints.length - 1));
-  }
-
-  const path = [];
-  const rawSamples = [];
+  const path = [...waypoints];
+  const samples = [];
   let length = 0;
   let ascent = 0;
   let descent = 0;
   let minimum = Infinity;
   let maximum = -Infinity;
   let visited = 0;
-  for (const [segmentIndex, segment] of segments.entries()) {
-    path.push(...segment.path.slice(segmentIndex ? 1 : 0));
-    rawSamples.push(...segment.samples.slice(segmentIndex ? 1 : 0).map(sample => ({ ...sample, distance: sample.distance + length })));
-    length += segment.length;
-    ascent += segment.ascent;
-    descent += segment.descent;
-    minimum = Math.min(minimum, segment.minimum);
-    maximum = Math.max(maximum, segment.maximum);
-    visited += segment.visited;
+  let partial = false;
+  for (let segmentIndex = 0; segmentIndex < waypoints.length - 1; segmentIndex++) {
+    const start = waypoints[segmentIndex];
+    const end = waypoints[segmentIndex + 1];
+    const [startX, startY] = project(...start);
+    const [endX, endY] = project(...end);
+    const steps = Math.max(1, Math.ceil(Math.hypot(endX - startX, endY - startY)));
+    let previousPoint = null;
+    let previousElevation = null;
+    for (let step = segmentIndex ? 1 : 0; step <= steps; step++) {
+      const fraction = step / steps;
+      const point = step === 0 ? start : step === steps ? end : unproject(startX + (endX - startX) * fraction, startY + (endY - startY) * fraction);
+      const cell = pointIndex(model, ...point);
+      const elevation = cell >= 0 ? model.elevations[cell] : null;
+      if (cell < 0) partial = true;
+      else {
+        const column = cell % model.width;
+        const row = Math.floor(cell / model.width);
+        if (column === 0 || row === 0 || column === model.width - 1 || row === model.height - 1) partial = true;
+        minimum = Math.min(minimum, elevation);
+        maximum = Math.max(maximum, elevation);
+      }
+      if (previousPoint) {
+        const north = (point[0] - previousPoint[0]) * 111320;
+        const east = (point[1] - previousPoint[1]) * 111320 * Math.cos((point[0] + previousPoint[0]) * Math.PI / 360);
+        length += Math.hypot(north, east);
+        if (elevation !== null && previousElevation !== null) {
+          const change = elevation - previousElevation;
+          if (change > 0) ascent += change;
+          else descent -= change;
+        }
+      }
+      samples.push({ distance: length, elevation, point });
+      previousPoint = point;
+      previousElevation = elevation;
+      visited++;
+    }
+    onProgress((segmentIndex + 1) / (waypoints.length - 1));
   }
-
-  let sampleIndex = 0;
-  const samples = Array.from({ length: 121 }, (_, index) => {
-    const distance = length * index / 120;
-    while (sampleIndex < rawSamples.length - 2 && rawSamples[sampleIndex + 1].distance < distance) sampleIndex++;
-    const first = rawSamples[sampleIndex];
-    const second = rawSamples[Math.min(sampleIndex + 1, rawSamples.length - 1)];
-    const fraction = second.distance > first.distance ? (distance - first.distance) / (second.distance - first.distance) : 0;
-    return {
-      distance,
-      elevation: first.elevation + (second.elevation - first.elevation) * fraction,
-      point: [first.point[0] + (second.point[0] - first.point[0]) * fraction, first.point[1] + (second.point[1] - first.point[1]) * fraction],
-    };
-  });
+  if (!Number.isFinite(minimum)) throw new Error('The movement axis has no samples inside terrain coverage');
   const north = (path.at(-1)[0] - path[0][0]) * 111320;
   const east = (path.at(-1)[1] - path[0][1]) * 111320 * Math.cos(path[0][0] * Math.PI / 180);
   const bearing = (Math.atan2(east, north) * 180 / Math.PI + 360) % 360;
-  return { path, samples, length, ascent, descent, minimum, maximum, totalVariation: ascent + descent, bearing, partial: segments.some(segment => segment.partial), visited };
+  return { path, samples, length, ascent, descent, minimum, maximum, totalVariation: ascent + descent, bearing, partial, visited };
 }
 
 export function routeViewshed(model, routeSamples, radiusMeters, onProgress = () => {}, observerHeight = 1.7, targetHeight = 1.5) {
   if (!Number.isFinite(radiusMeters) || radiusMeters <= 0) throw new RangeError('Viewshed radius must be positive');
   const targets = [];
-  const sampleStride = Math.max(1, Math.ceil(routeSamples.length / 61));
+  const sampleStride = Math.max(1, Math.ceil(routeSamples.length / 241));
   for (let index = 0; index < routeSamples.length; index += sampleStride) {
     const sample = routeSamples[index];
     const cell = pointIndex(model, ...sample.point);

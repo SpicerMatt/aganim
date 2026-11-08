@@ -28,6 +28,15 @@
 .viewshed-actions{display:flex;align-items:center;gap:6px}
 .viewshed-actions .button{min-height:31px;padding:0 10px;font-size:10px}
 .viewshed-legend{display:flex;align-items:center;gap:7px;font-size:9px;color:#607060}
+.welcome-steps{display:grid;gap:14px;margin:22px 0;padding-inline-start:24px;color:#526455}
+.welcome-steps li{padding-inline-start:5px}
+.welcome-steps li::marker{font-size:12px;font-weight:700;color:#c84f40}
+.welcome-steps strong,.welcome-steps span{display:block}
+.welcome-steps strong{margin-bottom:3px;font-size:12px;color:#294c3c}
+.welcome-steps span{font-size:11px;line-height:1.55}
+.welcome-start{display:inline-flex;align-items:center;gap:8px;min-height:38px;padding:0 14px}
+.welcome-skip{display:flex;align-items:center;gap:8px;margin:4px 0 16px;font-size:11px;color:#526455;cursor:pointer}
+.welcome-skip input{width:15px;height:15px;margin:0;accent-color:#c84f40}
 .viewshed-assumption{font-size:8px;color:#8b9784}
 .viewshed-swatch{flex:0 0 12px;width:12px;height:12px;border:1px solid #c84f40;border-radius:2px;background:rgba(224,82,70,.3)}
 .viewshed-warning{margin:0;font-size:9px;line-height:1.45;color:#9a533a}
