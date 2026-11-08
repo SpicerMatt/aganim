@@ -45,6 +45,16 @@ function AppMark({ size = 22 }) {
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3 22 21H2L12 3Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round"/><circle cx="12" cy="15" r="1.5" fill="currentColor"/></svg>;
 }
 
+function WelcomeDemo({ kind }) {
+  return <div className={`welcome-demo welcome-demo-${kind}`} aria-hidden="true">
+    <span className="demo-contours"/>
+    {kind === 'watershed' && <><span className="demo-basin"/><span className="demo-river"/><span className="demo-outlet"/></>}
+    {kind === 'axis' && <><span className="demo-axis-line"/><span className="demo-waypoint demo-a">A</span><span className="demo-waypoint demo-b">B</span><span className="demo-waypoint demo-c">C</span></>}
+    {kind === 'visibility' && <><span className="demo-visible-area"/><span className="demo-axis-line"/><span className="demo-waypoint demo-a">A</span><span className="demo-waypoint demo-b">B</span></>}
+    {kind === 'profile' && <><span className="demo-profile-grid"/><span className="demo-profile-line"/></>}
+  </div>;
+}
+
 function terrainContours(model) {
   const step = 4;
   const width = Math.floor(model.width / step);
@@ -321,6 +331,14 @@ function App() {
     document.title = t('AGANIM | Israel & Neighbors');
     saveLanguage(language);
   }, [language]);
+
+  useEffect(() => {
+    if (profilesOpen && window.matchMedia('(max-width: 600px)').matches) setMobilePanelOpen(false);
+  }, [profilesOpen]);
+
+  useEffect(() => {
+    if (profilesOpen && window.matchMedia('(max-width: 600px)').matches) setMobilePanelOpen(false);
+  }, [profilesOpen]);
 
   useEffect(() => {
     if (!import.meta.env.PROD || !('serviceWorker' in navigator)) return;
@@ -655,7 +673,12 @@ function App() {
         {modal === 'welcome' && <div className="modal-backdrop" onClick={dismissWelcome}><section className="modal welcome-modal" role="dialog" aria-modal="true" aria-label={t('Welcome to AGANIM')} onClick={event => event.stopPropagation()}>
           <div className="modal-heading"><span className="modal-icon"><Route size={24}/></span><IconButton icon={X} label={t('Close dialog')} onClick={dismissWelcome}/></div>
           <h2>{t('Welcome to AGANIM')}</h2><p>{t('Choose a tool in the analysis panel to explore terrain and visibility.')}</p>
-          <ol className="welcome-steps"><li><strong>{t('Watershed analysis')}</strong><span>{t('Example: search for Jordan River, northern Israel, select it, then choose the nearby channel outlet to calculate its watershed.')}</span></li><li><strong>{t('Movement axis')}</strong><span>{t('Example: click A, B, then C; two straight segments appear immediately.')}</span></li><li><strong>{t('Visibility area')}</strong><span>{t('Example: choose a 2 km radius; red terrain can see at least one sampled point on the axis.')}</span></li><li><strong>{t('Elevation profile')}</strong><span>{t('Example: after a visibility check, choose Show elevation profile; close it to uncover the map.')}</span></li></ol>
+          <ol className="welcome-steps">
+            <li><WelcomeDemo kind="watershed"/><div><strong>{t('Watershed analysis')}</strong><span>{t('Example: search for Jordan River, northern Israel, select it, then choose the nearby channel outlet to calculate its watershed.')}</span></div></li>
+            <li><WelcomeDemo kind="axis"/><div><strong>{t('Movement axis')}</strong><span>{t('Example: click A, B, then C; two straight segments appear immediately.')}</span></div></li>
+            <li><WelcomeDemo kind="visibility"/><div><strong>{t('Visibility area')}</strong><span>{t('Example: choose a 2 km radius; red terrain can see at least one sampled point on the axis.')}</span></div></li>
+            <li><WelcomeDemo kind="profile"/><div><strong>{t('Elevation profile')}</strong><span>{t('Example: after a visibility check, choose Show elevation profile; close it to uncover the map.')}</span></div></li>
+          </ol>
           <label className="welcome-skip"><input type="checkbox" checked={skipWelcomeNextTime} onChange={event => setSkipWelcomeNextTime(event.target.checked)}/><span>{t("Don't show this again")}</span></label>
           <button className="button button-primary welcome-start" onClick={dismissWelcome}>{t('Start exploring')}<ArrowUpRight size={15}/></button>
         </section></div>}
